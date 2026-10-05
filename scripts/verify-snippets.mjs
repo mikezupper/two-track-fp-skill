@@ -69,7 +69,7 @@ writeFileSync(
       strict: true, exactOptionalPropertyTypes: true, noUncheckedIndexedAccess: true, noImplicitOverride: true,
       noPropertyAccessFromIndexSignature: true, verbatimModuleSyntax: true, isolatedModules: true, erasableSyntaxOnly: true,
       allowImportingTsExtensions: true, skipLibCheck: true, noEmit: true, types: ["node"],
-      paths: { "two-track": [join(lib, "src/index.ts")] },
+      paths: { "two-track": [join(lib, "src/index.ts")], "two-track/testing": [join(lib, "src/testing.ts")] },
     },
     include: ["**/*.ts"],
   }),
@@ -77,7 +77,7 @@ writeFileSync(
 writeFileSync(
   join(out, "vitest.config.ts"),
   `import { defineConfig } from "vitest/config";
-export default defineConfig({ resolve: { alias: { "two-track": ${JSON.stringify(join(lib, "src/index.ts"))} } }, test: { include: ["src/testing-0[1-6].ts"], root: "." } });
+export default defineConfig({ resolve: { alias: [{ find: "two-track/testing", replacement: ${JSON.stringify(join(lib, "src/testing.ts"))} }, { find: "two-track", replacement: ${JSON.stringify(join(lib, "src/index.ts"))} }] }, test: { include: ["src/testing-*.ts"], exclude: ["src/testing-00.ts", "src/testing-08.ts"], root: "." } });
 `,
 );
 

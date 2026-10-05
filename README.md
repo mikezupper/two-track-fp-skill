@@ -82,7 +82,7 @@ This is a CPU-bound microbenchmark. In an I/O-bound service none of these rows i
 
 ## Hard rules
 
-Stated in `SKILL.md`, enforced three ways: the strict `tsconfig` in `references/scaffold.md`, the `scripts/invariants.ts` the scaffold copies into every project (custom lint whose every message ends with the fix), and the greps in `references/code-review.md`.
+Stated in `SKILL.md`, enforced three ways: the strict `tsconfig` in `references/scaffold.md`, [`two-track-check`](https://github.com/mikezupper/two-track/tree/main/tools/check) (a dev-time checker on TypeScript 6's compiler API whose every finding ends with the fix, including the type-aware ignored-`Result` rule), and the greps in `references/code-review.md` as the fallback.
 
 | Banned | Instead |
 |---|---|
@@ -100,6 +100,8 @@ Stated in `SKILL.md`, enforced three ways: the strict `tsconfig` in `references/
 | Mocking libraries | Fakes as plain objects; `Cap.controlledClock` / `instantSleeper` / `seededRandom` / `sequentialIds` |
 | `default:` over a domain union | `match` / `matchBy` / `assertNever` |
 | `console.log` | A `Logger` port, used at the edge |
+| An ignored `Result` / un-awaited `AsyncResult` | `two-track-check --strict` fails the build (`ignored-result`, `floating-async-result`) |
+| Hand-rolled "cancel the previous request" | `Lane.switchLane` / `exhaustLane` / `queueLane` |
 
 ## The Wlaschin → two-track mapping
 
@@ -111,7 +113,7 @@ Stated in `SKILL.md`, enforced three ways: the strict `tsconfig` in `references/
 | Validation that reports everything | `D.struct` accumulates; `R.validateAll`; `Async.validateConcurrent` |
 | Recipe for a functional app | domain/ → workflows/ → infra/ → `main.ts`; ports as interfaces; `deps` record |
 | Commands in, events out | Workflows return a tagged event union; edges dispatch with `match` |
-| Property-based testing | fast-check arbitraries beside each decoder, round-trip and law properties |
+| Property-based testing | fast-check arbitraries beside each decoder; `two-track/testing` law and round-trip helpers |
 | Thinking functionally | Data-first functions, `pipe`, immutability by type, totality via `assertNever` |
 
 ## What doesn't map
@@ -182,7 +184,7 @@ Progressive disclosure, which is why it is a folder and not one big file:
 
 1. `SKILL.md` (~180 lines) loads when the skill triggers: philosophy, hard rules, a decision table ("situation → tool"), the anti-pattern list, an 11-step build workflow, and the honest "what doesn't map" section.
 2. Each workflow step points at a **reference file** the agent reads only when working in that area — designing errors loads `railway.md`, touching persistence loads `database.md`, and so on.
-3. The final step is **mandatory self-review** (`code-review.md`): mechanical greps for banned constructs, a dependency-direction audit, error-channel, type-design, runtime, performance and test audits, and a sweep of every checklist touched — before the agent may declare the work done. The scaffold also installs a per-project `scripts/invariants.ts` so most of those greps run in CI with the fix in the message.
+3. The final step is **mandatory self-review** (`code-review.md`): `two-track-check --strict` first, then mechanical greps for banned constructs, a dependency-direction audit, error-channel, type-design, runtime, performance and test audits, and a sweep of every checklist touched — before the agent may declare the work done.
 
 ## How to best leverage it
 
@@ -210,7 +212,7 @@ Progressive disclosure, which is why it is a folder and not one big file:
 
 ## Version policy
 
-- **Target:** `two-track` 0.1.x, TypeScript 7.0+, Node ≥ 22.18 (native type stripping) or any ES2023 engine.
+- **Target:** `two-track` 0.1.x and `two-track-check` 0.1.x, TypeScript 7.0+ for the app, Node ≥ 22.18 (native type stripping) or any ES2023 engine.
 - Every reference snippet was compiled with the strict `tsconfig` from `references/scaffold.md` against two-track 0.1.0 (October 2026).
 - The `Result`/`Option` encodings (`ok`/`value`/`error`, `some`/`value`) are part of the library's public contract; code written with this skill narrows on them directly and will not need changes in a minor version.
 

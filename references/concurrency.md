@@ -226,6 +226,62 @@ export const ingest = async <A, E>(
 
 `chunks` is an async generator — the one place a generator is right, because it *is* the stream and runs once per 500 rows, not once per railway step. Workers are started from `main.ts` with the shutdown signal and awaited before `disposers` run, so shutdown drains in-flight work.
 
+## Lanes — a new trigger arrived; what happens to the previous call?
+
+`mapConcurrent` is for a finite collection you already hold. UIs, HTTP handlers, webhooks and pollers ask a different question: a trigger arrives while the last operation is still running. Those are the `switchMap` / `exhaustMap` / `concatMap` semantics, shipped as plain functions in the `Lane` namespace (two-track decision 0009). Each lane holds contained state in a closure you create once — in the shell, next to the event handler, never in `domain/` — and each adds its outcome to the error union so the edge must say what it means to the user.
+
+| Trigger pattern | Lane | Rejected calls get |
+|---|---|---|
+| Search-as-you-type, latest wins | `Lane.switchLane(run)` | `Superseded` (immediately, even if the old run ignores its signal) |
+| Save button, ignore while busy | `Lane.exhaustLane(run)` | `Busy` |
+| Webhook / command log, strict order with back-pressure | `Lane.queueLane(run, { depth })` | `QueueFull({ depth })` beyond `depth` waiting |
+| Burst smoothing, trailing edge | `Lane.debounce(run, ms, { sleeper })` | `Superseded` for every call but the last in the burst |
+| Rate cap, leading edge | `Lane.throttle(run, ms, { clock })` | `Busy` inside the window |
+| Bounded concurrency, no list and no trigger | `Lane.semaphore(n).run(f)` | `Busy` only if aborted while waiting |
+
+```ts
+import { Async, Cap, Lane, R, err, match, ok, tagged, type AsyncResult } from "two-track";
+
+const Network = tagged("Network")<{ cause: unknown }>();
+type Network = ReturnType<typeof Network>;
+type Hit = { readonly id: string; readonly title: string };
+
+// infra: the only fetch, signal threaded
+const searchApi = (q: string, signal: AbortSignal): AsyncResult<Network, ReadonlyArray<Hit>> =>
+  Async.tryPromise(
+    async (s) => (await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: s })).json() as Promise<ReadonlyArray<Hit>>,
+    (cause) => Network({ cause }),
+    signal,
+  );
+
+// shell: debounce the keystrokes, then let only the newest request win
+const debounced = Lane.debounce((signal, q: string) => searchApi(q, signal), 250, { sleeper: Cap.systemSleeper });
+export const search = Lane.switchLane((signal, q: string) => debounced(q), { signal: new AbortController().signal });
+
+// the edge decides what each outcome looks like; Superseded is normal, not an error to show
+export const render = (r: Awaited<ReturnType<typeof search>>): string =>
+  R.match(
+    r,
+    (hits) => `${hits.length} results`,
+    (e) => match(e, { Network: () => "offline — retry", Superseded: () => "" }),
+  );
+
+// a save button: second click while saving is ignored, and the UI can say so
+const saveApi = (draft: string, signal: AbortSignal): AsyncResult<Network, void> => Async.tryPromise(async () => void draft, (cause) => Network({ cause }), signal);
+export const save = Lane.exhaustLane((signal, draft: string) => saveApi(draft, signal));
+
+// ordered ingestion with back-pressure; a full queue is a 429, not a dropped promise
+const handle = async (_signal: AbortSignal, event: string): AsyncResult<never, string> => ok(event.toUpperCase());
+export const ingest = Lane.queueLane(handle, { depth: 100 });
+export const ingestStatus = (r: Awaited<ReturnType<typeof ingest>>): number => (r.ok ? 202 : 429);
+
+// a semaphore when the bound is a resource, not a list
+const db = Lane.semaphore(10);
+export const load = (id: string): AsyncResult<Lane.Busy | Network, string> => db.run((signal) => (id === "" ? Promise.resolve(err(Network({ cause: "empty id" }))) : Promise.resolve(ok(id))), undefined);
+```
+
+Testing lanes needs no real time: `Cap.manualSleeper()` fires debounce timers when the test says so, `Cap.controlledClock()` moves the throttle window, and deferred promises stand in for in-flight work. Assert the tag of the rejected call, that the superseded run observed `signal.aborted`, and that the lane-level `signal` aborts everything.
+
 ## What not to do
 
 | Don't | Because | Instead |
@@ -237,8 +293,11 @@ export const ingest = async <A, E>(
 | retry everything | duplicates non-idempotent writes, hammers a failing dependency | `retriable` predicate + idempotency keys |
 | ignoring the `signal` a combinator passes you | timeouts and first-failure aborts do nothing | pass it to `fetch`, drivers, `sleep` |
 | buffering a cursor/stream into an array | memory grows with the table | `for await` over `chunks(source, n)` |
+| A hand-rolled `AbortController` + `busy` flag to cancel or ignore the previous call | Subtle to get right; the superseded promise is usually left hanging | `Lane.switchLane` / `Lane.exhaustLane` / `Lane.queueLane` |
 
 ## Checklist
+
+- [ ] Every "what happens to the previous call" situation uses a `Lane`, in the shell, and the edge handles `Superseded`/`Busy`/`QueueFull` explicitly
 
 - [ ] Every fan-out is `Async.mapConcurrent` / `Async.validateConcurrent` with an explicit `concurrency`
 - [ ] Every port call and every `fetch` receives the `AbortSignal` it was handed

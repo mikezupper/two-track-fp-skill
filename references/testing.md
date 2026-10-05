@@ -16,7 +16,7 @@ Tier 1 is large *because* logic was pushed into the pure core. If a calculation 
 
 ## Arbitraries live next to decoders
 
-There is no schema runtime to derive generators from, so each decoder gets a hand-written fast-check arbitrary in the same module, and the arbitrary **goes through the decoder** so every generated value is valid by construction. A generator that bypasses the decoder tests a type you don't ship.
+There is no schema runtime to derive generators from, so each decoder gets a hand-written fast-check arbitrary in the same module, and the arbitrary **goes through the decoder** so every generated value is valid by construction. A generator that bypasses the decoder tests a type you don't ship. The shipped form of the `viaDecoder` helper below is `arbDecoded` from `two-track/testing`; the hand-written version is shown so the mechanism is visible.
 
 ```ts
 // Arbitraries next to decoders: two ways to generate values that are valid BY CONSTRUCTION.
@@ -116,6 +116,54 @@ describe("firstOk laws", () => {
   });
 });
 ```
+
+## `two-track/testing`: laws and round-trips in one line
+
+The library proves its own functor/monad laws and decoder round-trips with fast-check and ships those properties as helpers (two-track decision 0011). fast-check is passed in as the first argument — it is never a dependency of the package — so the helpers work with whatever `fc` your project installed. Use them for **every** custom combinator in `src/lib/` and **every** boundary decoder.
+
+```ts
+import fc from "fast-check";
+import { describe, it } from "vitest";
+import { D, O, R, type Result } from "two-track";
+import { arbDecoded, arbOption, arbResult, decoderDoesNotMutate, decoderNeverThrows, decoderRoundTrip, functorLaws, monadLaws } from "two-track/testing";
+
+const Email = D.brand(D.pattern(/^[^\s@]+@[^\s@]+$/, "expected email"), "Email");
+const Line = D.struct({ sku: D.nonEmptyString, qty: D.min(D.integer, 1), gift: D.option(D.boolean) });
+
+// a custom combinator: Result that remembers how many steps ran
+type Traced<E, A> = Result<E, { readonly value: A; readonly steps: number }>;
+const traced = <A>(a: A): Traced<never, A> => R.ok({ value: a, steps: 0 });
+const mapTraced = <E, A, B>(t: Traced<E, A>, f: (a: A) => B): Traced<E, B> => R.map(t, (x) => ({ value: f(x.value), steps: x.steps }));
+const andThenTraced = <E, A, E2, B>(t: Traced<E, A>, f: (a: A) => Traced<E2, B>): Traced<E | E2, B> =>
+  R.andThen(t, (x) => R.map(f(x.value), (y) => ({ value: y.value, steps: x.steps + y.steps + 1 })));
+
+describe("laws", () => {
+  const arbTraced = arbResult(fc, fc.string(), fc.record({ value: fc.integer(), steps: fc.nat() }));
+  it("Traced is a lawful functor", () => functorLaws(fc, { arb: arbTraced, map: mapTraced }));
+  it("Traced is a lawful monad up to the step count", () =>
+    monadLaws(fc, {
+      arb: arbTraced,
+      of: traced,
+      andThen: andThenTraced,
+      equals: (a, b) => JSON.stringify(R.map(a, (x) => x.value)) === JSON.stringify(R.map(b, (x) => x.value)),
+    }));
+  it("Option is lawful (sanity: the library's own)", () => functorLaws(fc, { arb: arbOption(fc, fc.integer()), map: O.map }));
+});
+
+describe("decoders", () => {
+  it("Email round-trips, never throws, never mutates", () => {
+    decoderRoundTrip(fc, Email, arbDecoded(fc, fc.emailAddress(), Email));
+    decoderNeverThrows(fc, Email);
+  });
+  it("Line round-trips through its wire encoding", () => {
+    const arbLine = arbDecoded(fc, fc.record({ sku: fc.string({ minLength: 1 }), qty: fc.integer({ min: 1 }), gift: fc.option(fc.boolean(), { nil: null }) }), Line);
+    decoderRoundTrip(fc, Line, arbLine, { encode: (l) => ({ ...l, gift: O.toNullable(l.gift) }) });
+    decoderDoesNotMutate(fc, Line, fc.anything());
+  });
+});
+```
+
+A law helper throws (through fast-check, with the shrunken counter-example) when the law fails; the `equals` hook is for containers whose equality is coarser than structural, as in the `steps` example. `monadLaws` derives its Kleisli arrows from `arb`/`of`/`andThen` unless you pass `arbKleisli`. The arbitraries these helpers return are typed structurally, so hand them to the helpers freely but add `as fc.Arbitrary<T>` if you pass one back into `fc.record` or `fc.func`.
 
 ## Invariants and state machines
 
@@ -358,6 +406,8 @@ export default defineConfig({
 - Run the suite and paste the output when you claim it is green. Never claim green without running.
 
 ## Checklist
+
+- [ ] Every custom combinator has `functorLaws`/`monadLaws`; every boundary decoder has `decoderRoundTrip` + `decoderNeverThrows` from `two-track/testing`
 
 - [ ] Every decoder has an arbitrary that goes through it, a round-trip property, a JSON round-trip, and a never-throws/never-mutates property
 - [ ] Every money/quantity calculation has invariants (non-negative, order-independent, no float drift)

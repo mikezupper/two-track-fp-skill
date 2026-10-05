@@ -33,7 +33,9 @@ Every rule has a mechanical check in `references/code-review.md`; several are al
 - **Immutability by type:** `readonly` on every field, `ReadonlyArray`, `as const`. No `let` at module scope; no in-place `push`/`splice`/`sort` on data that escapes a function (contained local mutation inside a pure function is fine).
 - **Every fan-out has explicit `{ concurrency: n }`; every external call has `Async.withTimeout`; retries are transient-only with `Async.backoff` and injected `Random`.**
 - **Strict TypeScript:** `strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `noPropertyAccessFromIndexSignature`, `erasableSyntaxOnly`. No `any`, no `@ts-ignore`, no non-null `!`.
-- **Fakes, not mocks.** Test doubles are plain objects implementing your capability interfaces; `Cap.controlledClock`, `Cap.instantSleeper`, `Cap.seededRandom`, `Cap.sequentialIds` for the library's capabilities.
+- **Fakes, not mocks.** Test doubles are plain objects implementing your capability interfaces; `Cap.controlledClock`, `Cap.instantSleeper`, `Cap.manualSleeper`, `Cap.seededRandom`, `Cap.sequentialIds` for the library's capabilities.
+- **Run `two-track-check --strict` before declaring any work done.** It is TypeScript's missing `#[must_use]`: an ignored `Result` or an un-awaited `AsyncResult` is an error, not a style note. Every other hard rule above is a rule in it too, with the fix in the message. A suppression comment needs a reason.
+- **Prove laws, don't assert examples.** Every custom combinator gets `functorLaws`/`monadLaws` and every decoder gets `decoderRoundTrip` from `two-track/testing` — one line each.
 
 ## Decision table
 
@@ -59,6 +61,11 @@ Every rule has a mechanical check in `references/code-review.md`; several are al
 | Cancellation | thread the `AbortSignal` every combinator hands you into `fetch`/drivers |
 | Wrapping a throwing/rejecting API | `R.fromThrowable` / `Async.tryPromise` **once**, in `infra/` |
 | Multi-service rollback | explicit compensation list on the error path (`references/concurrency.md`) |
+| A new trigger arrives while the previous call is in flight (search-as-you-type, double-click, webhook order) | `Lane.switchLane` (newest wins) / `Lane.exhaustLane` (ignore while busy) / `Lane.queueLane` (in order, bounded) — shell only |
+| Burst smoothing | `Lane.debounce` (trailing, via `Sleeper`) / `Lane.throttle` (leading, via `Clock`) |
+| Bounded concurrency with neither a list nor a trigger | `Lane.semaphore(n).run(f)` |
+| Proving a custom combinator or decoder | `two-track/testing`: `functorLaws`, `monadLaws`, `decoderRoundTrip`, `decoderNeverThrows`, `arbDecoded` |
+| Checking an app for the foot-guns types cannot see | `npx two-track-check --strict` (ignored Results, layers, platform calls, brand casts, `Promise.all`, `fetch` without signal, `default:` without `assertNever`) |
 | Unbounded data | `AsyncIterable` (an `async function*` adapter in `infra/`) + `for await` in the shell; never buffer it all |
 | Hot loop over many items | plain early-return functions, no closures/spread/allocation per element (`references/performance.md`) |
 | A function that provably cannot fail | return `A`, not `Result<never, A>` |
@@ -83,6 +90,9 @@ Every rule has a mechanical check in `references/code-review.md`; several are al
 // ❌ import _ from "lodash" / R from "ramda" → Array methods, two-track, or 20 lines in src/lib/
 // ❌ error: string                          → tagged error with structured fields
 // ❌ R.map(R.andThen(R.map(x, f), g), h) in a per-element hot loop → early returns
+// ❌ reserveStock(line);  (a Result, ignored)   → const r = reserveStock(line); if (!r.ok) return r;   [two-track-check: ignored-result]
+// ❌ let current: AbortController | undefined … (hand-rolled "cancel the previous") → Lane.switchLane(run)
+// ❌ Async.retry(run, { attempts: 5, delay })   → retriable is required: say which errors are transient
 ```
 
 ## Workflow for building an app
@@ -94,10 +104,10 @@ Every rule has a mechanical check in `references/code-review.md`; several are al
 5. **Define the ports** (`references/capabilities-di.md`): interfaces for every dependency a workflow needs; the `Deps` record; fakes alongside.
 6. **Write workflows** as `async (deps, command) => AsyncResult<Error, Outcome>` over domain types and ports. Pure decisions in `domain/`; effects only through `deps`. Prefer commands-in/events-out.
 7. **Implement infrastructure** (`references/database.md`, `references/concurrency.md`): adapters that translate driver errors into domain errors; wire everything in one `main.ts`.
-8. **Test** (`references/testing.md`): pure functions with fast-check properties; workflows with fakes and controlled capabilities; error tracks as API surface.
+8. **Test** (`references/testing.md`): pure functions with fast-check properties and the `two-track/testing` law helpers; workflows with fakes and controlled capabilities; error tracks as API surface.
 9. **Measure what is hot** (`references/performance.md`): identify per-element paths, keep them allocation-free, benchmark them.
 10. **Production-harden** (`references/production.md`): structured logs, timeouts, bounded concurrency, graceful shutdown, health checks.
-11. **Self-review** (`references/code-review.md`): run the full review pass before declaring the work done. Mandatory.
+11. **Self-review** (`references/code-review.md`): run `two-track-check --strict`, then the full review pass, before declaring the work done. Mandatory.
 
 ## Reference files — read before working in each area
 
@@ -124,7 +134,8 @@ Every rule has a mechanical check in `references/code-review.md`; several are al
 - **No fibers, no interruption.** `AbortSignal` is the cancellation mechanism, and it only works if you thread it into `fetch`/drivers.
 - **No nominal types.** A brand can be forged with `as`; the grep for `as Brand<` and `as unknown as` is load-bearing.
 - **No schema-derived test generators.** fast-check arbitraries are written next to each decoder with a round-trip property tying them together.
-- **No enforced purity.** The compiler cannot see `Date.now()`. The platform-call grep is load-bearing.
+- **No enforced purity.** The compiler cannot see `Date.now()`. The `no-platform-calls` rule in `two-track-check` (and the grep fallback) is load-bearing.
+- **No `#[must_use]`.** TypeScript lets you drop a `Result` on the floor. `two-track-check`'s `ignored-result` / `floating-async-result` rules are the substitute; run them.
 - **What you get in exchange:** ~12 ns per three-step railway, zero runtime, one dependency of ~900 readable lines, the same build in browsers, workers, edge runtimes, Bun, and Node, and types you can read without a PhD.
 
 ## Canonical style

@@ -1,6 +1,6 @@
 # Project Scaffold — and the Mechanical Enforcement Layer
 
-Everything here exists so the SKILL.md hard rules **fail the build** rather than rely on discipline; a rule with no enforcer rots. The philosophy is Wlaschin's *functional core, imperative shell* laid out as directories whose dependency direction a 60-line script checks on every run. The toolchain is deliberately small: TypeScript 7 does the type-level enforcement, a custom invariants script does architecture and taste, vitest + fast-check do the proving.
+Everything here exists so the SKILL.md hard rules **fail the build** rather than rely on discipline; a rule with no enforcer rots. The philosophy is Wlaschin's *functional core, imperative shell* laid out as directories whose dependency direction a 60-line script checks on every run. The toolchain is deliberately small: TypeScript 7 does the type-level enforcement, `two-track-check` (a separate dev-time package with the type-aware rules TypeScript 7 alone cannot express) does architecture and taste, vitest + fast-check + `two-track/testing` do the proving.
 
 Verified against two-track 0.1.0 (October 2026) with TypeScript 7.0.2, vitest 5.0.3, fast-check 4.10.2, Node 24.
 
@@ -18,7 +18,7 @@ Verified against two-track 0.1.0 (October 2026) with TypeScript 7.0.2, vitest 5.
   "scripts": {
     "dev": "node --watch src/main.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "node scripts/invariants.ts",
+    "lint": "two-track-check --strict .",
     "test": "vitest run",
     "check": "pnpm typecheck && pnpm lint && pnpm vitest run --coverage",
     "build": "tsc -p tsconfig.build.json"
@@ -30,6 +30,7 @@ Verified against two-track 0.1.0 (October 2026) with TypeScript 7.0.2, vitest 5.
     "@types/node": "^26.6.4",
     "@vitest/coverage-v8": "^5.0.3",
     "fast-check": "^4.10.2",
+    "two-track-check": "github:mikezupper/two-track#path:tools/check",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"
   }
@@ -80,7 +81,7 @@ src/
 ├── lib/           tiny project-local helpers (10–150 lines each, tested). no I/O.
 ├── http/ | cli/   the edge: decode request → workflow → encode response/exit code. imports everything.
 └── main.ts        the ONE composition root: decode env, build deps, start, stop.
-scripts/invariants.ts   test/   bench/
+test/   bench/   two-track-check.json
 ```
 
 Edges are one-way: `main → http → workflows → domain`, `main → infra → domain`. `workflows/` names ports (interfaces in `domain/ports.ts`) that `infra/` implements; it never imports `infra/`.
@@ -113,67 +114,40 @@ const main = (): number => {
 process.exitCode = main();
 ```
 
-## 4. scripts/invariants.ts — the rules, with the fix in every message
+## 4. two-track-check — the rules, with the fix in every message
 
-Copy this file. It is the enforcer for the hard rules the type checker cannot see. Every violation message ends with `— fix: …` because the reader is usually an agent that will apply it without further context. Extend `RULES` when the team adopts a new rule; never widen a rule to make a build pass without a sentence in the commit explaining why.
+Do not copy a lint script into the app; a copied script rots. `two-track-check` is versioned with the library (two-track decision 0010) and runs on TypeScript 6's compiler API, which is why it is a separate package with its own dependencies while the app compiles with TypeScript 7. It understands the layout above through a config file:
 
-```ts
-// scripts/invariants.ts — copy into the app; run with `node scripts/invariants.ts` (Node ≥ 22.18 strips types).
-// Every message ends with the fix, because the reader is usually an agent.
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
-
-type Rule = { readonly id: string; readonly pattern: RegExp; readonly only?: RegExp; readonly fix: string };
-
-const RULES: ReadonlyArray<Rule> = [
-  { id: "no-throw", pattern: /\bthrow\b/, fix: "return err(Tagged({...})); throw is for assertNever only" },
-  { id: "no-try", pattern: /\btry\s*\{/, only: /^src\/(domain|workflows)\//, fix: "wrap with R.fromThrowable / Async.tryPromise in infra/" },
-  { id: "no-catch", pattern: /\.catch\(/, fix: "use Async.fromPromise(promise, onReject); a railway promise never rejects" },
-  { id: "no-any", pattern: /:\s*any\b|\bas any\b/, fix: "use unknown and a decoder" },
-  { id: "no-generators", pattern: /function\s*\*|\byield\b/, fix: "early return or await (40-80x measured)" },
-  { id: "no-freeze", pattern: /Object\.freeze/, fix: "readonly types (10-20x measured)" },
-  { id: "no-class-data", pattern: /\bclass\s+[A-Z]/, fix: "plain readonly object types + functions" },
-  { id: "no-cast-brand", pattern: /as Brand<|as unknown as/, fix: "obtain brands from a decoder (D.brand)" },
-  { id: "no-null-domain", pattern: /\bnull\b/, only: /^src\/domain\//, fix: "Option<A>; null only in infra decoders" },
-  { id: "no-platform-core", pattern: /Date\.now\(|new Date\(\)|Math\.random\(|randomUUID\(|setTimeout\(|\bfetch\(/, only: /^src\/(domain|workflows)\//, fix: "take a capability from deps" },
-  { id: "domain-imports", pattern: /from\s+["'](?!two-track["']|\.\/|\.\.\/)/, only: /^src\/domain\//, fix: "domain/ imports only two-track and siblings" },
-  { id: "workflows-imports", pattern: /from\s+["'][^"']*\/infra\//, only: /^src\/workflows\//, fix: "workflows depend on ports, never on infra/" },
-  { id: "one-root", pattern: /process\.env/, only: /^src\/(?!main\.ts)/, fix: "decode env once in main.ts and pass Config down" },
-];
-
-const walk = (dir: string, out: string[] = []): string[] => {
-  for (const e of readdirSync(dir)) {
-    const p = join(dir, e);
-    if (statSync(p).isDirectory()) walk(p, out);
-    else if (p.endsWith(".ts")) out.push(p);
-  }
-  return out;
-};
-
-export const check = (root: string): string[] => {
-  const out: string[] = [];
-  for (const file of walk(join(root, "src"))) {
-    const name = relative(root, file);
-    readFileSync(file, "utf8").split("\n").forEach((line, i) => {
-      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
-      for (const r of RULES) {
-        if (r.only !== undefined && !r.only.test(name)) continue;
-        if (r.pattern.test(line)) out.push(`${name}:${i + 1}: [${r.id}] ${line.trim()} — fix: ${r.fix}`);
-      }
-    });
-  }
-  return out;
-};
-
-const violations = check(process.cwd());
-if (violations.length > 0) {
-  console.error(violations.join("\n"));
-  process.exit(1);
+```json
+{
+  "layers": {
+    "domain": ["src/domain"],
+    "workflows": ["src/workflows"],
+    "infra": ["src/infra"],
+    "lib": ["src/lib"],
+    "root": ["src/main.ts"]
+  },
+  "brandFiles": ["**/decoders.ts", "**/brands.ts", "**/domain/types.ts"],
+  "allowedDomainImports": ["two-track"],
+  "testFiles": ["**/*.test.ts", "test/**"]
 }
-console.log("invariants: ok");
 ```
 
-Allowlist by file when a rule has a sanctioned exception (the `money.ts` re-brand helpers for `no-cast-brand`; `assertNever` call sites are fine because the rule matches `throw`, not the call). Also run it as a structural test — `test/architecture.test.ts` calling `check(root)` and expecting `[]` — so `pnpm test` alone catches drift.
+All keys are optional and merge over these defaults; an `include` array restricts the files checked (useful for a monorepo package). Rule ids are kebab-case so the suppression grammar is uniform.
+
+Save it as `two-track-check.json` at the project root and run `pnpm lint` (`two-track-check --strict .`). What it enforces, each finding ending in `— fix: …`:
+
+| Family | Rules |
+|---|---|
+| Must-use (type-aware) | `ignored-result` — a `Result`-returning call used as a statement; `floating-async-result` — an un-awaited promise. `void expr;` is an explicit, allowed discard |
+| Banned constructs | `no-throw`, `no-try`, `no-catch`, `no-generators` (except an `async function*` stream adapter in `infra/`/`lib/`), `no-freeze`, `no-class`, `no-any`, `no-non-null`, `no-ts-suppress`, `no-console` |
+| Purity | `no-platform-calls` — `Date.now`, `new Date()`, `Math.random`, `randomUUID`, timers, `fetch` outside `infra/`, `lib/`, `main.ts` |
+| Layers | `layer-domain-imports` (domain imports only `two-track` and itself), `layer-workflows-imports` (never `infra/`, `node:`, or drivers) |
+| Brands | `no-brand-cast` — `as <BrandedType>` / `as Brand<` / `as unknown as` outside `brandFiles` |
+| Concurrency | `no-bare-promise-all`, `fetch-needs-signal`, `switch-default-without-assert-never` |
+| Review (non-failing unless `--strict`) | `review-unwrap-or`, `review-decode-unknown` |
+
+Suppress one line with `// two-track-check-allow <rule-id> <reason>`; a suppression without a reason is itself an error, and the summary counts them so a reviewer can see how many exceptions the codebase carries. `--json` emits machine-readable findings for CI annotations.
 
 ## 5. vitest config and coverage thresholds
 
@@ -193,7 +167,7 @@ Property tests use `fast-check` directly (`fc.assert(fc.property(...))`); arbitr
 
 ## 6. Why no ESLint (for now)
 
-`typescript-eslint` does not load against the TypeScript 7.0 native compiler, and running a second TypeScript 6 install beside it was judged not worth the complexity (two-track decision 0007). The type checker with every strict flag plus the invariants script covers every hard rule in SKILL.md. When typescript-eslint supports TS ≥ 7.1, add it with `strictTypeChecked` and exactly these extra rules, which are the ones the invariants script cannot express: `@typescript-eslint/switch-exhaustiveness-check` (with `considerDefaultExhaustiveForUnions: false`), `@typescript-eslint/no-floating-promises`, `no-param-reassign`, `prefer-const`. Until then, "every `AsyncResult` is awaited or returned" is a self-review item.
+`typescript-eslint` does not load against the TypeScript 7.0 native compiler (two-track decision 0007). The rules that mattered most from it — exhaustiveness and floating promises — are now covered type-aware by `two-track-check` (`switch-default-without-assert-never`, `floating-async-result`, plus `ignored-result`, which ESLint never had). When typescript-eslint supports TS ≥ 7.1, add it with `strictTypeChecked` for the generic hygiene rules (`no-param-reassign`, `prefer-const`, unused imports); nothing in SKILL.md waits on it.
 
 ## 7. CI
 
@@ -210,7 +184,7 @@ jobs:
         with: { node-version: 24, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
-      - run: pnpm lint                       # scripts/invariants.ts — fails with the fix in the message
+      - run: pnpm lint                       # two-track-check --strict — fails with the fix in the message
       - run: pnpm vitest run --coverage      # thresholds enforced
       - run: pnpm build
 ```
@@ -222,8 +196,8 @@ Keep the same `pnpm check` locally as the definition of done; CI runs nothing a 
 - [ ] `two-track` is the only runtime dependency reachable from `domain/` and `workflows/`; no lodash/Ramda/fp-ts/neverthrow/Zod anywhere
 - [ ] tsconfig has `strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `noPropertyAccessFromIndexSignature`, `erasableSyntaxOnly`, `.ts` imports
 - [ ] Layout is `domain/ workflows/ infra/ lib/ <edge>/ main.ts`; `workflows/` never imports `infra/`
-- [ ] `scripts/invariants.ts` is present, run by `pnpm lint` and by a structural test; every message ends with `— fix:`
+- [ ] `two-track-check.json` describes the layers; `pnpm lint` runs `two-track-check --strict .`; zero findings or each suppression has a reason
 - [ ] `process.env` is read only in `main.ts`; one composition root builds `deps`
 - [ ] vitest coverage thresholds set; fast-check installed; no mocking library
-- [ ] CI runs typecheck, invariants, tests with coverage, build — the same as `pnpm check`
+- [ ] CI runs typecheck, two-track-check, tests with coverage, build — the same as `pnpm check`
 - [ ] No ESLint config present until typescript-eslint supports the project's TypeScript; the four rules to add then are noted

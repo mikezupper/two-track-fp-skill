@@ -1,6 +1,15 @@
 # Self-Review Pass — run before declaring any work done
 
-After implementing, review your own output as a hostile reviewer would. Do this **every time**, before reporting completion. Fix everything found, then re-run the pass. There is no runtime and (for now) no type-aware linter in this stack, so these greps are load-bearing: they are what stands between "the types say so" and "the code does so". Verified against two-track 0.1.0 (October 2026).
+After implementing, review your own output as a hostile reviewer would. Do this **every time**, before reporting completion. Fix everything found, then re-run the pass. There is no runtime in this stack, so static checks are what stands between "the types say so" and "the code does so". Run the checker first; the greps are the fallback for a repo that cannot run it (and a second opinion when it can). Verified against two-track 0.1.0 (October 2026).
+
+## 0. Run the checker
+
+```bash
+npx two-track-check --strict .        # exit 1 on any error OR review finding; every line ends with "— fix: …"
+npx two-track-check --json . > two-track-check.json   # for CI annotations
+```
+
+Zero findings, or every suppression (`// two-track-check-allow <rule> <reason>`) has a reason you would defend in review. Paste the summary line into your completion report. The rules that only the checker can see, because they need types: `ignored-result` (a `Result` used as a statement — the error vanished), `floating-async-result` (an un-awaited promise), `no-brand-cast` on a branded target type. Review-severity findings (`review-unwrap-or`, `review-decode-unknown`) are not bugs by definition; read each and either confirm it in a comment or change the code.
 
 ## 1. Mechanical sweep — run these greps over `src/`
 

@@ -269,6 +269,8 @@ Retry rules: `attempts` counts the first try; `delay` is exponential with full j
 
 ## Checklist
 
+- [ ] Every `Async.retry` names its `retriable` predicate (required); nothing retries validation or `NotFound`
+
 - [ ] Every error is a `tagged("WhatHappened")` constructor with structured fields and an exported type derived from it
 - [ ] Every public `Result`/`AsyncResult` signature has `E` as a union of named tags — no `Error`, `unknown`, `string`
 - [ ] One failure with several causes uses a nested tagged `reason`, not many sibling tags
