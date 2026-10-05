@@ -61,7 +61,8 @@ import { getJson, Timeout, type FetchError } from "./http.ts";
 type Deps = { readonly sleeper: Cap.Sleeper; readonly random: Cap.Random };
 
 // Retry only what is transient; jitter comes from an injected Random; delays from an injected Sleeper.
-export const getJsonResilient = (deps: Deps, url: string, parent: AbortSignal): AsyncResult<FetchError, unknown> =>
+// Because a `signal` is passed, the union gains Async.Aborted: cancelling during a backoff wait is visible in the type.
+export const getJsonResilient = (deps: Deps, url: string, parent: AbortSignal): AsyncResult<FetchError | Async.Aborted, unknown> =>
   Async.retry(
     (_attempt, signal) =>
       Async.withTimeout((s) => getJson(url, s), 5_000, () => Timeout({ url, ms: 5_000 }), signal),
@@ -234,7 +235,7 @@ export const ingest = async <A, E>(
 |---|---|---|
 | Search-as-you-type, latest wins | `Lane.switchLane(run)` | `Superseded` (immediately, even if the old run ignores its signal) |
 | Save button, ignore while busy | `Lane.exhaustLane(run)` | `Busy` |
-| Webhook / command log, strict order with back-pressure | `Lane.queueLane(run, { depth })` | `QueueFull({ depth })` beyond `depth` waiting |
+| Webhook / command log, strict order with back-pressure | `Lane.queueLane(run, { depth })` | `QueueFull({ depth })` beyond `depth` waiting; `Busy` for calls still waiting when the lane is aborted |
 | Burst smoothing, trailing edge | `Lane.debounce(run, ms, { sleeper })` | `Superseded` for every call but the last in the burst |
 | Rate cap, leading edge | `Lane.throttle(run, ms, { clock })` | `Busy` inside the window |
 | Bounded concurrency, no list and no trigger | `Lane.semaphore(n).run(f)` | `Busy` only if aborted while waiting |
@@ -297,6 +298,7 @@ Testing lanes needs no real time: `Cap.manualSleeper()` fires debounce timers wh
 
 ## Checklist
 
+- [ ] Every `Async.retry` that takes a `signal` handles `Aborted`; nothing is retried after cancellation (the library guarantees no attempt starts after an abort, including during the backoff wait)
 - [ ] Every "what happens to the previous call" situation uses a `Lane`, in the shell, and the edge handles `Superseded`/`Busy`/`QueueFull` explicitly
 
 - [ ] Every fan-out is `Async.mapConcurrent` / `Async.validateConcurrent` with an explicit `concurrency`

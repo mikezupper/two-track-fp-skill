@@ -255,7 +255,7 @@ export const toResponse = (r: Result<CheckoutError, { readonly id: string }>): R
 type Gateway = { readonly charge: (cents: number, signal: AbortSignal) => AsyncResult<ChargeFailedT, void> };
 type Deps = { readonly gateway: Gateway; readonly sleeper: Cap.Sleeper; readonly random: Cap.Random };
 
-export const chargeWithRetry = (deps: Deps, cents: number, parent: AbortSignal): AsyncResult<ChargeFailedT, void> =>
+export const chargeWithRetry = (deps: Deps, cents: number, parent: AbortSignal): AsyncResult<ChargeFailedT | Async.Aborted, void> =>
   Async.retry((_attempt, signal) => deps.gateway.charge(cents, signal), {
     attempts: 5,
     delay: Async.backoff({ baseMs: 100, factor: 2, maxMs: 2_000, random: deps.random.next }),
@@ -265,11 +265,12 @@ export const chargeWithRetry = (deps: Deps, cents: number, parent: AbortSignal):
   });
 ```
 
-Retry rules: `attempts` counts the first try; `delay` is exponential with full jitter from an **injected** `Random`; the `retriable` predicate reads a field on the error, never a message string; `sleeper` is injected so tests are instant; the parent `AbortSignal` stops retrying on shutdown. Wrap the whole thing in `Async.withTimeout` when there is a deadline (`references/concurrency.md`).
+Retry rules: `attempts` counts the first try; `delay` is exponential with full jitter from an **injected** `Random`; the `retriable` predicate reads a field on the error, never a message string; `sleeper` is injected so tests are instant; the parent `AbortSignal` stops retrying on shutdown — no attempt starts after an abort, including during the backoff wait, and the outcome is `err(Aborted)`, which is why the error union above names `Async.Aborted` (it only appears when a `signal` is passed). Wrap the whole thing in `Async.withTimeout` when there is a deadline (`references/concurrency.md`).
 
 ## Checklist
 
 - [ ] Every `Async.retry` names its `retriable` predicate (required); nothing retries validation or `NotFound`
+- [ ] A `retry` given a `signal` handles `Aborted` at the edge (the union is `E | Aborted` only then); cancellation is never inferred from "the last error"
 
 - [ ] Every error is a `tagged("WhatHappened")` constructor with structured fields and an exported type derived from it
 - [ ] Every public `Result`/`AsyncResult` signature has `E` as a union of named tags — no `Error`, `unknown`, `string`

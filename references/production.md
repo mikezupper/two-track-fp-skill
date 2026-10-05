@@ -65,7 +65,7 @@ const OrderNotFound = tagged("OrderNotFound")<{ orderId: string }>();
 const PaymentDeclined = tagged("PaymentDeclined")<{ reason: string; retriable: boolean }>();
 const Upstream = tagged("Upstream")<{ service: string; retriable: boolean }>();
 const Timeout = tagged("Timeout")<{ service: string; afterMs: number }>();
-type CheckoutError = ReturnType<typeof OrderNotFound> | ReturnType<typeof PaymentDeclined> | ReturnType<typeof Upstream> | ReturnType<typeof Timeout>;
+type CheckoutError = ReturnType<typeof OrderNotFound> | ReturnType<typeof PaymentDeclined> | ReturnType<typeof Upstream> | ReturnType<typeof Timeout> | Async.Aborted;
 
 type Ctx = { readonly requestId: string; readonly log: Logger; readonly metrics: Metrics; readonly signal: AbortSignal };
 type Deps = { readonly clock: Cap.Clock; readonly ids: Cap.IdGen; readonly log: Logger; readonly metrics: Metrics };
@@ -91,6 +91,8 @@ export const toResponse = (ctx: Ctx, r: Awaited<AsyncResult<CheckoutError, { rea
         PaymentDeclined: ({ reason, retriable }) => ({ status: retriable ? 503 : 402, body: { error: "payment_declined", reason, requestId: ctx.requestId } }),
         Upstream: ({ service }) => ({ status: 502, body: { error: "upstream_unavailable", service, requestId: ctx.requestId } }),
         Timeout: ({ service }) => ({ status: 504, body: { error: "upstream_timeout", service, requestId: ctx.requestId } }),
+        // The client went away mid-retry: nothing to retry, nothing to show. 499 is nginx's convention for exactly this.
+        Aborted: () => ({ status: 499, body: { error: "client_cancelled", requestId: ctx.requestId } }),
       });
     },
   );

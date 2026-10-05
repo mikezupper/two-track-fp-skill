@@ -70,7 +70,8 @@ import { Async, O, ok, err, type AsyncResult } from "two-track";
 import { type Deps, type Order, type OrderId, type RepoError, type PaymentDeclined } from "./ports.ts";
 
 export type PayOrderDeps = Pick<Deps, "orders" | "payments" | "clock" | "sleeper" | "random" | "log">;
-export type PayOrderError = RepoError | PaymentDeclined | { readonly _tag: "OrderNotFound"; readonly orderId: OrderId };
+// The retry below takes the request signal, so cancellation is a named outcome of this workflow, not a guess from the last error.
+export type PayOrderError = RepoError | PaymentDeclined | Async.Aborted | { readonly _tag: "OrderNotFound"; readonly orderId: OrderId };
 
 export type Ctx = { readonly requestId: string; readonly signal: AbortSignal };
 

@@ -361,6 +361,10 @@ describe("fan-out", () => {
 
 The 1 ms `tick` is the one place a timer is acceptable in a test file: it yields the event loop so concurrency can be observed. Never use timers to test retry delays or timeouts — those take a `Sleeper`/`Clock`.
 
+## Time-dependent code gets properties too
+
+Example tests of retry, timeouts and lanes show the schedules you thought of. The bugs live in the schedules you did not — a downstream consumer found that `Async.retry` ran one extra attempt when cancelled during its backoff wait, a case no example covered. For anything that sleeps, races or coordinates triggers, generate the schedule: a fast-check `asyncProperty` over a random sequence of events (call, resolve run *i*, fire pending sleep *j*, advance the clock, abort) driven through `Cap.manualSleeper()` and `Cap.controlledClock()`, asserting the invariants after every step and the leak conditions at the end (`sleeper.pending()` empty, no abort listeners left on a counting signal wrapper). The library's own `test/*.properties.test.ts` are the template, and its invariants script refuses a new export of `async`/`lanes`/`capabilities` without one; adopt the same rule for your `src/lib/` helpers.
+
 ## Test-only immutability check
 
 `Object.freeze` is banned in `src/` (decision 0003: 10–20x measured). In tests it is free and useful: a frozen fixture makes any accidental mutation throw under strict-mode ESM.
@@ -407,6 +411,7 @@ export default defineConfig({
 
 ## Checklist
 
+- [ ] Every helper in `src/lib/` that sleeps, races or coordinates triggers has a schedule-generating property with leak checks, not only examples
 - [ ] Every custom combinator has `functorLaws`/`monadLaws`; every boundary decoder has `decoderRoundTrip` + `decoderNeverThrows` from `two-track/testing`
 
 - [ ] Every decoder has an arbitrary that goes through it, a round-trip property, a JSON round-trip, and a never-throws/never-mutates property

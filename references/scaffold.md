@@ -30,7 +30,7 @@ Verified against two-track 0.1.0 (October 2026) with TypeScript 7.0.2, vitest 5.
     "@types/node": "^26.6.4",
     "@vitest/coverage-v8": "^5.0.3",
     "fast-check": "^4.10.2",
-    "two-track-check": "github:mikezupper/two-track#path:tools/check",
+    "two-track-check": "github:mikezupper/two-track#path:tools/check",   // both move to npm versions once published (release workflow with provenance)
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"
   }
