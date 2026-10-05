@@ -139,7 +139,7 @@ Save it as `two-track-check.json` at the project root and run `pnpm lint` (`two-
 
 | Family | Rules |
 |---|---|
-| Must-use (type-aware) | `ignored-result` — a `Result`-returning call used as a statement; `floating-async-result` — an un-awaited promise. `void expr;` is an explicit, allowed discard |
+| Must-use (type-aware) | `ignored-result` — a `Result` (or an array/promise of Results, e.g. `items.map(fallible);`) used as a statement; `floating-async-result` — an un-awaited promise; `ignored-result-in-callback` — a callback returning a Result where the callee expects `void` (`items.forEach(fallible)`); `floating-async-callback` — `forEach(async …)`. `void expr;` is an explicit, allowed discard |
 | Banned constructs | `no-throw`, `no-try`, `no-catch`, `no-generators` (except an `async function*` stream adapter in `infra/`/`lib/`), `no-freeze`, `no-class`, `no-any`, `no-non-null`, `no-ts-suppress`, `no-console` |
 | Purity | `no-platform-calls` — `Date.now`, `new Date()`, `Math.random`, `randomUUID`, timers, `fetch` outside `infra/`, `lib/`, `main.ts` |
 | Layers | `layer-domain-imports` (domain imports only `two-track` and itself), `layer-workflows-imports` (never `infra/`, `node:`, or drivers) |

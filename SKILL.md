@@ -91,6 +91,8 @@ Every rule has a mechanical check in `references/code-review.md`; several are al
 // ❌ error: string                          → tagged error with structured fields
 // ❌ R.map(R.andThen(R.map(x, f), g), h) in a per-element hot loop → early returns
 // ❌ reserveStock(line);  (a Result, ignored)   → const r = reserveStock(line); if (!r.ok) return r;   [two-track-check: ignored-result]
+// ❌ lines.forEach(reserveStock) / lines.map(reserveStock);  → R.traverse(lines, reserveStock)   [ignored-result-in-callback / ignored-result]
+// ❌ lines.forEach(async (l) => { await reserve(l) }) → for-of with await, or Async.mapConcurrent   [floating-async-callback]
 // ❌ let current: AbortController | undefined … (hand-rolled "cancel the previous") → Lane.switchLane(run)
 // ❌ Async.retry(run, { attempts: 5, delay })   → retriable is required: say which errors are transient
 ```

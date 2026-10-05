@@ -9,7 +9,7 @@ npx two-track-check --strict .        # exit 1 on any error OR review finding; e
 npx two-track-check --json . > two-track-check.json   # for CI annotations
 ```
 
-Zero findings, or every suppression (`// two-track-check-allow <rule> <reason>`) has a reason you would defend in review. Paste the summary line into your completion report. The rules that only the checker can see, because they need types: `ignored-result` (a `Result` used as a statement — the error vanished), `floating-async-result` (an un-awaited promise), `no-brand-cast` on a branded target type. Review-severity findings (`review-unwrap-or`, `review-decode-unknown`) are not bugs by definition; read each and either confirm it in a comment or change the code.
+Zero findings, or every suppression (`// two-track-check-allow <rule> <reason>`) has a reason you would defend in review. Paste the summary line into your completion report. The rules that only the checker can see, because they need types: `ignored-result` (a `Result`, or an array/promise of Results such as `items.map(fallible);`, used as a statement — the error vanished), `floating-async-result` (an un-awaited promise), `ignored-result-in-callback` and `floating-async-callback` (a Result or promise returned from a `forEach`-style callback the callee discards), `no-brand-cast` on a branded target type. Review-severity findings (`review-unwrap-or`, `review-decode-unknown`) are not bugs by definition; read each and either confirm it in a comment or change the code.
 
 ## 1. Mechanical sweep — run these greps over `src/`
 
