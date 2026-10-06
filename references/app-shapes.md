@@ -51,10 +51,35 @@ export const routes = (app: HonoApp, deps: Deps): HonoApp =>
 | Framework | Body | Abort signal | Response | Notes |
 |---|---|---|---|---|
 | Hono | `await c.req.json()` | `c.req.raw.signal` | `c.json(body, status)` | same code on every runtime |
-| Fastify | `request.body` (disable its schema; decode with `D`) | `request.raw` + `AbortController` on `close` | `reply.code(status).send(body)` | fastest on Node; Node-only |
-| `node:http` | collect chunks, then `D.json(Decoder).decode(text)` | `req.once("close")` → `controller.abort()` | `res.writeHead(status).end(JSON.stringify(body))` | zero deps; fine for small services |
+| Fastify | `request.body` (disable its schema; decode with `D`) | `reply.raw.once("close")` → abort if `!reply.raw.writableFinished` | `reply.code(status).send(body)` | fastest on Node; Node-only |
+| `node:http` | collect chunks, then `D.json(Decoder).decode(text)` | `res.once("close")` → abort **only if** `!res.writableFinished` (the request's own `close` fires when its body is consumed — see below) | `res.writeHead(status).end(JSON.stringify(body))` | zero deps; fine for small services |
 
 Rules: handlers never contain logic; the request's signal is threaded into the workflow and from there into every external call; the error → status table is one `match` per transport (see `production.md`); decode failures are 400 with `D.formatIssues` text; unknown tags are impossible by construction.
+
+### The request signal on `node:http` (found building the proof repo)
+
+Every handler needs one `AbortSignal` that means "the client is gone or the deadline passed". On `node:http` the tempting source is wrong: the request's own `close` event fires as soon as its body stream has been consumed, so a signal derived from it aborts every POST right after its JSON was read, and every downstream port call fails with `aborted`. The client going away is the **response** closing before it finished:
+
+```ts
+import { createServer } from "node:http";
+import { Async } from "two-track";
+
+declare const handle: (signal: AbortSignal) => Async.AsyncResult<{ readonly _tag: "Timeout" } | { readonly _tag: "Oops" }, { readonly status: number; readonly body: unknown }>;
+
+export const server = createServer((req, res) => {
+  const controller = new AbortController();
+  res.on("close", () => {
+    if (!res.writableFinished) controller.abort(); // disconnected mid-flight, not "finished normally"
+  });
+  void Async.withTimeout(() => handle(controller.signal), 10_000, () => ({ _tag: "Timeout" as const }), controller.signal).then((r) => {
+    res.writeHead(r.ok ? r.value.status : r.error._tag === "Timeout" ? 504 : 500, { "content-type": "application/json" });
+    res.end(JSON.stringify(r.ok ? r.value.body : { error: r.error._tag }));
+  });
+  void req;
+});
+```
+
+Hono, Fastify and the Fetch-API runtimes hand you `request.signal` already wired this way; only the bare `node:http` adapter has this trap.
 
 ## CLI
 

@@ -33,7 +33,10 @@ Verified against two-track 0.1.0 (October 2026) with TypeScript 7.0.2, vitest 5.
     "two-track-check": "github:mikezupper/two-track#path:tools/check",   // both move to npm versions once published (release workflow with provenance)
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"
-  }
+  },
+  // Git installs run each package's `prepare` script to build dist/; pnpm 10 requires an explicit allowlist.
+  // Drop this block once you install from npm.
+  "pnpm": { "onlyBuiltDependencies": ["two-track", "two-track-check"] }
 }
 ```
 
