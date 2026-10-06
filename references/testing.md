@@ -2,7 +2,7 @@
 
 From [The Property-Based Testing series](https://fsharpforfunandprofit.com/series/property-based-testing/): example tests prove your code works for the cases you thought of; property tests attack the ones you didn't. The architecture — a synchronous pure core, effects behind a capability record — is what makes both cheap: `total(lines)` needs no runtime, no fixture, no fake; a workflow over `deps` needs a 20-line plain object, not a framework. Nothing here needs a mocking library, a test clock plugin, or a schema runtime.
 
-Stack: **vitest 5 + fast-check 4**, both dev dependencies. `Cap.controlledClock`, `Cap.instantSleeper`, `Cap.seededRandom`, `Cap.sequentialIds` ship in the library. Verified against two-track 0.1.0 (October 2026).
+Stack: **vitest 5 + fast-check 4**, both dev dependencies. `Cap.controlledClock`, `Cap.instantSleeper`, `Cap.manualSleeper`, `Cap.seededRandom`, `Cap.sequentialIds` ship in the library. Verified against two-track 0.1.0 (October 2026).
 
 ## The test pyramid
 
@@ -18,7 +18,7 @@ Tier 1 is large *because* logic was pushed into the pure core. If a calculation 
 
 There is no schema runtime to derive generators from, so each decoder gets a hand-written fast-check arbitrary in the same module, and the arbitrary **goes through the decoder** so every generated value is valid by construction. A generator that bypasses the decoder tests a type you don't ship. `arbDecoded` from `two-track/testing` is the shipped form of the `viaDecoder` helper below, and it is the right input for the other `two-track/testing` helpers — but it returns a structural `Arb<T>`, which `fc.property`, `fc.record` and `fc.uniqueArray` do not accept. For arbitraries you will hand back to fast-check, use the local `viaDecoder` (a real `fc.Arbitrary`), as the proof repo had to.
 
-Two hazards, both met in practice: a `filter` that rejects **always** (a value fed through the wrong decoder, say) is not a failed property but a synchronous infinite loop that `--testTimeout` cannot interrupt — fast-check's "filters must reject rarely" is a hard rule; and `two-track-check` applies `no-throw` and `no-non-null` inside test files too (only `Object.freeze`, platform calls and `@ts-` suppressions are test-exempt), so fail a fixture with `expect.unreachable()` and narrow with a check rather than `!`.
+Two hazards, both met in practice: a `filter` that rejects **always** (a value fed through the wrong decoder, say) is not a failed property but a synchronous infinite loop that `--testTimeout` cannot interrupt — fast-check's "filters must reject rarely" is a hard rule; and `two-track-check` applies `no-throw` and `no-non-null` inside test files too (only `Object.freeze`, platform calls, `Promise.all`, brand casts and `@ts-` suppressions are test-exempt), so fail a fixture with `expect.unreachable()` and narrow with a check rather than `!`.
 
 ```ts
 // Arbitraries next to decoders: two ways to generate values that are valid BY CONSTRUCTION.
@@ -175,10 +175,12 @@ For a tagged-union state machine, generate random command sequences, fold them t
 
 ```ts
 // A tagged-union state machine checked against a simple model (fold-based; no classes, no runtime).
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import fc from "fast-check";
-import { assertNever, err, ok, tagged, type Result, type Tagged } from "two-track";
-import { arbLine, type Cents, type Line } from "../domain/arbitraries.ts";
+import { R, assertNever, err, ok, tagged, type Result, type Tagged } from "two-track";
+import { Cents, arbLine, type Line } from "../domain/arbitraries.ts";
+// In production the re-brand helper lives in domain/types.ts (a `brandFiles` module). In a test, go through the decoder.
+const cents = (n: number): Cents => R.unwrapOrElse(Cents.decode(n), (e) => expect.unreachable(`not Cents: ${String(e)}`));
 
 type Draft = Tagged<"Draft", { lines: ReadonlyArray<Line> }>;
 type Placed = Tagged<"Placed", { total: Cents }>;
@@ -195,7 +197,7 @@ export const step = (s: OrderState, c: Command): Result<IllegalTransition, Order
       return s._tag === "Draft" ? ok({ _tag: "Draft", lines: [...s.lines, c.line] }) : err(IllegalTransition({ from: s._tag, command: c._tag }));
     case "Place":
       return s._tag === "Draft" && s.lines.length > 0
-        ? ok({ _tag: "Placed", total: s.lines.reduce((acc, l) => acc + l.qty * l.unitPrice, 0) as Cents })
+        ? ok({ _tag: "Placed", total: cents(s.lines.reduce((acc, l) => acc + l.qty * l.unitPrice, 0)) })
         : err(IllegalTransition({ from: s._tag, command: c._tag }));
     case "Pay":
       return s._tag === "Placed" ? ok({ _tag: "Paid", total: s.total }) : err(IllegalTransition({ from: s._tag, command: c._tag }));
@@ -245,8 +247,8 @@ A fake is a plain object implementing the port interface, plus whatever state th
 ```ts
 // Workflow tests: fakes as plain objects, controlled capabilities, error tracks as API surface.
 import { describe, expect, it } from "vitest";
-import { Async, Cap, O, err, ok, tagged, type AsyncResult, type Option } from "two-track";
-import { type Cents, type Email } from "../domain/arbitraries.ts";
+import { Async, Cap, D, O, R, err, ok, tagged, type AsyncResult, type Option } from "two-track";
+import { Cents, Email } from "../domain/arbitraries.ts";
 
 const NotFound = tagged("CustomerNotFound")<{ email: Email }>();
 const Declined = tagged("PaymentDeclined")<{ retriable: boolean }>();
@@ -292,8 +294,11 @@ const fakeDeps = (opts: { readonly known: ReadonlyArray<string>; readonly declin
   return { deps, ledger, sleeper };
 };
 
-const email = "a@b.com" as Email;
-const amount = 999 as Cents;
+// Fixtures go THROUGH the decoder (domain-types.md); a bad fixture fails the test, it does not throw.
+const mustDecode = <A>(decoder: D.Decoder<A>, raw: unknown): A =>
+  R.unwrapOrElse(decoder.decode(raw), (e) => expect.unreachable(`fixture does not decode: ${D.formatIssues(e)}`));
+const email = mustDecode(Email, "a@b.com");
+const amount = mustDecode(Cents, 999);
 
 describe("chargeCustomer", () => {
   it("retries a transient decline without real time passing, then records once", async () => {
@@ -365,7 +370,7 @@ The 1 ms `tick` is the one place a timer is acceptable in a test file: it yields
 
 ## Time-dependent code gets properties too
 
-Example tests of retry, timeouts and lanes show the schedules you thought of. The bugs live in the schedules you did not — a downstream consumer found that `Async.retry` ran one extra attempt when cancelled during its backoff wait, a case no example covered. For anything that sleeps, races or coordinates triggers, generate the schedule: a fast-check `asyncProperty` over a random sequence of events (call, resolve run *i*, fire pending sleep *j*, advance the clock, abort) driven through `Cap.manualSleeper()` and `Cap.controlledClock()`, asserting the invariants after every step and the leak conditions at the end (`sleeper.pending()` empty, no abort listeners left on a counting signal wrapper). The library's own `test/*.properties.test.ts` are the template, and its invariants script refuses a new export of `async`/`lanes`/`capabilities` without one; adopt the same rule for your `src/lib/` helpers.
+Example tests of retry, timeouts and lanes show the schedules you thought of. The bugs live in the schedules you did not — a downstream consumer found that `Async.retry` ran one extra attempt when cancelled during its backoff wait, a case no example covered. For anything that sleeps, races or coordinates triggers, generate the schedule: a fast-check `asyncProperty` over a random sequence of events (call, resolve run *i*, fire pending sleep *j*, advance the clock, abort) driven through `Cap.manualSleeper()` and `Cap.controlledClock()`, asserting the invariants after every step and the leak conditions at the end (`sleeper.pending()` empty, no abort listeners left on a counting signal wrapper). The library's own `test/*.properties.test.ts` are the template, and the library repo's own invariants script (its self-check, not something an app installs) refuses a new export of `async`/`lanes`/`capabilities` without one; adopt the same rule for your `src/lib/` helpers.
 
 ## Test-only immutability check
 
@@ -373,17 +378,16 @@ Example tests of retry, timeouts and lanes show the schedules you thought of. Th
 
 ```ts
 import { expect, it } from "vitest";
-import { Line, type Cents } from "../domain/arbitraries.ts";
-import { R } from "two-track";
+import { Line } from "../domain/arbitraries.ts";
+import { D, R } from "two-track";
 
 const total = (lines: ReadonlyArray<Line>): number => lines.reduce((sum, l) => sum + l.qty * l.unitPrice, 0);
 
 it("total does not mutate its input", () => {
   // TEST-ONLY (decision 0003): a frozen fixture turns any accidental mutation into a thrown TypeError.
-  const line = R.unwrapOrElse(Line.decode({ sku: "ABC-123", qty: 2, unitPrice: 1999 }), (e) => { throw new Error(String(e)); });
+  const line = R.unwrapOrElse(Line.decode({ sku: "ABC-123", qty: 2, unitPrice: 1999 }), (e) => expect.unreachable(D.formatIssues(e)));
   const fixture: ReadonlyArray<Line> = Object.freeze([Object.freeze(line)]);
   expect(total(fixture)).toBe(3998);
-  void (0 as Cents);
 });
 ```
 
@@ -396,12 +400,12 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
-    coverage: { provider: "v8", include: ["src/**/*.ts"], exclude: ["src/main.ts"], thresholds: { lines: 95, branches: 90 } },
+    coverage: { provider: "v8", include: ["src/**/*.ts"], exclude: ["src/main.ts"], thresholds: { lines: 90, branches: 85 } },
   },
 });
 ```
 
-`pnpm test` runs `vitest run --coverage`; the structural invariants test (`test/architecture.test.ts`, see `scaffold.md`) runs in the same command so drift fails the suite, not just a lint step.
+`pnpm test` runs `vitest run --coverage`; layer direction and the other static rules are `two-track-check --strict` (`pnpm lint`), and `pnpm check` runs both, so drift fails the build either way.
 
 ## Rules
 

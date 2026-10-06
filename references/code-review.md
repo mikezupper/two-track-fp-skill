@@ -29,8 +29,8 @@ grep -rnE 'function\s*\*|\byield\b' src --include='*.ts' | grep -v 'src/infra/\|
 # --- totality & type honesty ---
 grep -rnE ':\s*any\b|\bas any\b|<any>|@ts-(ignore|expect-error|nocheck)' src --include='*.ts'   # zero (tests may use @ts-expect-error to prove exhaustiveness)
 grep -rnE '[A-Za-z0-9_)\]]!\.' src --include='*.ts'                            # non-null assertions: zero
-grep -rnE 'as Brand<|as unknown as' src --include='*.ts' | grep -v 'src/domain/.*decoders'      # brands come from D.brand; double casts only inside decoders
-grep -rnE '\bas [A-Z][A-Za-z]*\b' src/domain src/workflows --include='*.ts' | grep -vE 'as const|decoders\.ts|brand\.ts'  # arithmetic on a brand re-brands through ONE helper next to its decoder
+grep -rnE 'as Brand<|as unknown as' src --include='*.ts' | grep -vE 'brands\.ts|domain/types\.ts|decoders\.ts'   # brands come from D.brand; casts only in the checker's brandFiles
+grep -rnE '\bas [A-Z][A-Za-z]*\b' src/domain src/workflows --include='*.ts' | grep -vE 'as const|brands\.ts|domain/types\.ts|decoders\.ts'  # arithmetic on a brand re-brands through a helper in a brandFiles module
 grep -rnE '\b(null|undefined)\b' src/domain --include='*.ts' | grep -vE 'fromNullable|toNullable|D\.(nullable|optional|option)|ok\(undefined\)|: void'   # Option instead
 
 # --- data are plain, immutable, allocation-aware ---
@@ -40,12 +40,12 @@ grep -rnE '^\s*(export\s+)?let\b' src --include='*.ts'                          
 grep -rnE '\.(push|splice|sort|reverse|shift|unshift|pop)\(' src/domain --include='*.ts'   # mutation of escaping data? each hit must be a contained local
 
 # --- capabilities: only the adapter touches the platform ---
-grep -rnE 'Date\.now\(|new Date\(\)|Math\.random\(|randomUUID\(|\bsetTimeout\(|\bsetInterval\(' src --include='*.ts' | grep -vE 'src/infra/|src/main\.ts' | $NOCOMMENT
-grep -rnE '\bconsole\.' src --include='*.ts' | grep -v 'src/main\.ts'           # Logger port, not console
+grep -rnE 'Date\.now\(|new Date\(\)|Math\.random\(|randomUUID\(|getRandomValues\(|performance\.now\(|\bsetTimeout\(|\bsetInterval\(' src --include='*.ts' | grep -vE 'src/infra/|src/lib/|src/main\.ts' | $NOCOMMENT   # same exemptions as the checker: infra, lib, root
+grep -rnE '\bconsole\.' src --include='*.ts' | grep -vE 'src/infra/|src/lib/|src/main\.ts'   # Logger port, not console (the checker exempts infra, lib, root)
 grep -rnE 'process\.env' src --include='*.ts' | grep -v 'src/main\.ts'          # config decoded once, in the composition root
 
 # --- concurrency & resilience ---
-grep -rnE '\bPromise\.all\(' src --include='*.ts'                               # Async.mapConcurrent with explicit concurrency
+grep -rnE '\bPromise\.(all|allSettled|race|any)\(' src --include='*.ts' | grep -v 'src/lib/'   # Async.mapConcurrent / validateConcurrent / withTimeout
 grep -rnE '\bfetch\([^)]*\)' src --include='*.ts' | grep -v signal              # every fetch takes the signal you were handed
 grep -rnE 'mapConcurrent\(' src --include='*.ts' | grep -v concurrency          # heuristic: the options object must be on the same line or the next
 grep -rnE '\.andThen\(|\.map\(' src/domain --include='*.ts' | head             # fluent methods on a Result? there are none — this catches a class-based Result sneaking in
@@ -57,11 +57,11 @@ grep -rnE -A1 '^\s*default:' src --include='*.ts' | grep -vE 'default:|assertNev
 grep -rnE "from [\"'](lodash|ramda|fp-ts|neverthrow|zod|valibot|purify-ts|effect|ts-pattern|remeda)" src --include='*.ts'
 ```
 
-Reviewer checks the greps cannot make: an `AsyncResult` that is neither `await`ed nor returned (a floating railway — read every `Async.` call site); a `retriable` predicate that reads a message substring instead of a field; a `D.optional` on a domain type rather than a wire type.
+Reviewer checks the greps cannot make (the checker does make the first: `floating-async-result`, `ignored-result`): an `AsyncResult` that is neither `await`ed nor returned; a `retriable` predicate that reads a message substring instead of a field; a `D.optional` on a domain type rather than a wire type.
 
 ## 2. Dependency-direction audit
 
-The onion is a convention here, not a compiler error, so check it mechanically. Add the same greps to `test/architecture.test.ts` so `pnpm test` fails on drift (see `scaffold.md`).
+The onion is a convention here, not a compiler error, so check it mechanically. `two-track-check`'s `layer-domain-imports` / `layer-workflows-imports` fail `pnpm lint` on drift; the greps below are the same check by hand.
 
 ```bash
 # domain/ may import ONLY from "two-track" and its own directory
@@ -125,7 +125,7 @@ Read every exported function signature that returns `Result`/`AsyncResult` and c
 - [ ] Zero real sleeps for time logic (`grep -rnE 'setTimeout|sleep\(' test` → only an event-loop `tick` helper); `Cap.controlledClock` / `Cap.instantSleeper` instead
 - [ ] Fakes are plain objects; zero mocking libraries (`grep -rnE 'vi\.mock|jest\.mock|mockall|sinon' test` → zero)
 - [ ] Coverage thresholds configured and met
-- [ ] `pnpm check` (typecheck + invariants + tests + bench ratio) was **actually run** and its output is pasted in the hand-off. Never claim green without running
+- [ ] `pnpm check` (typecheck + `two-track-check --strict` + tests with coverage thresholds) was **actually run** and its output is pasted in the hand-off. Never claim green without running
 
 ## 8. Checklist sweep
 

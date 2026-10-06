@@ -258,7 +258,7 @@ const searchApi = (q: string, signal: AbortSignal): AsyncResult<Network, Readonl
 
 // shell: debounce the keystrokes, then let only the newest request win
 const debounced = Lane.debounce((signal, q: string) => searchApi(q, signal), 250, { sleeper: Cap.systemSleeper });
-export const search = Lane.switchLane((signal, q: string) => debounced(q), { signal: new AbortController().signal });
+export const search = Lane.switchLane((signal, q: string) => debounced(q));
 
 // the edge decides what each outcome looks like; Superseded is normal, not an error to show
 export const render = (r: Awaited<ReturnType<typeof search>>): string =>
@@ -312,4 +312,4 @@ Testing lanes needs no real time: `Cap.manualSleeper()` fires debounce timers wh
 - [ ] Multi-service workflows order the irreversible step last and compensate in reverse on the error track; compensation failures are logged, not thrown
 - [ ] No un-awaited promises; workers take the shutdown signal and are drained before disposers run
 - [ ] Unbounded data is consumed with `for await` in chunks, never buffered
-- [ ] No `setTimeout`/`setInterval` outside `infra/` and `main.ts`
+- [ ] No `setTimeout`/`setInterval` outside `infra/`, `lib/` and `main.ts` (`no-platform-calls`); `lib/` helpers take a `Sleeper` anyway

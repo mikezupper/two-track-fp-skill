@@ -25,6 +25,7 @@ const skill = join(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(tmpdir(), `two-track-skill-snippets-${process.pid}`);
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, "src", "domain"), { recursive: true });
+mkdirSync(join(out, "src", "infra"), { recursive: true });
 mkdirSync(join(out, "domain"), { recursive: true });
 symlinkSync(join(lib, "node_modules"), join(out, "node_modules"), "dir");
 
@@ -54,6 +55,7 @@ const aliases = {
   "src/http.ts": "./concurrency-00.ts",
   "src/ports.ts": "./capabilities-di-00.ts",
   "src/domain/ports.ts": "../capabilities-di-00.ts",
+  "src/infra/logger.ts": "../production-00.ts",
   "src/domain/pricing.ts": "../performance-00.ts",
   "domain/ports.ts": "../src/production-00.ts",
   "domain/arbitraries.ts": "../src/testing-00.ts",

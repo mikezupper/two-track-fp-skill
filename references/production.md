@@ -4,7 +4,7 @@
 
 ## Observability is a capability
 
-Logging and metrics follow the same rule as the clock: the domain never imports them, workflows receive them in `deps`/`ctx`, and the adapter is wired once in `main.ts`. Logs are JSON lines on stdout; the platform's shipper (Vector, Fluent Bit, the cloud agent) does transport. There is no `console.log` anywhere in `src/` — the review grep enforces it.
+Logging and metrics follow the same rule as the clock: the domain never imports them, workflows receive them in `deps`/`ctx`, and the adapter is wired once in `main.ts`. Logs are JSON lines on stdout; the platform's shipper (Vector, Fluent Bit, the cloud agent) does transport. There is no `console.log` outside `infra/`, `lib/` and `main.ts` — `two-track-check`'s `no-console` enforces it; the JSON logger in `infra/logger.ts` is the one writer to stdout.
 
 ```ts
 // domain/ports.ts — logging and metrics are capabilities, like the clock. The domain never imports a logger.
@@ -157,17 +157,20 @@ Wrap the port in `infra/`: `charge: breaker(() => gateway.charge(...))`. `Circui
 
 ## Composition root, config, shutdown
 
-`main.ts` is the only file that reads `process.env`, opens resources, or installs signal handlers. Config is decoded once with `D.struct` into a typed value; secrets are plain branded strings that never reach a log line (decode issues report paths and expectations, never the offending value of a secret). Shutdown is an `AbortController` tied to `SIGTERM`/`SIGINT` whose signal flows into every in-flight request; resources register disposers as they open and are closed in reverse.
+`main.ts` is the only file that reads `process.env`, opens resources, or installs signal handlers. Config is decoded once with `D.struct` into a typed value; secrets are the `Redacted` brand (`boundaries.md`), strings at runtime that never reach a log line (decode issues report paths and expectations, never the offending value of a secret). Shutdown is an `AbortController` tied to `SIGTERM`/`SIGINT` whose signal flows into every in-flight request; resources register disposers as they open and are closed in reverse.
 
 ```ts
 // main.ts — the one composition root: config decoded once, resources opened once, shutdown in reverse.
 import { Cap, D, R, type Infer } from "two-track";
-import { jsonLogger } from "../domain/ports.ts";
+import { jsonLogger } from "./infra/logger.ts";
+
+// Secrets are a brand whose only producer is this decoder (boundaries.md); a decode issue carries a path, never the value.
+const Redacted = D.brand(D.nonEmptyString, "Redacted");
 
 const Config = D.struct({
   PORT: D.map(D.pattern(/^\d{2,5}$/, "expected port"), Number),
-  DATABASE_URL: D.nonEmptyString,
-  PAYMENTS_API_KEY: D.nonEmptyString, // secret: never logged, never echoed in errors
+  DATABASE_URL: Redacted,
+  PAYMENTS_API_KEY: Redacted, // secret: never logged, never echoed in errors
   LOG_LEVEL: D.optional(D.literal("info", "warn", "error")),
 });
 type Config = Infer<typeof Config>;

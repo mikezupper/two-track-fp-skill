@@ -14,7 +14,10 @@ export const UserId = D.brand(D.pattern(/^usr_[a-z0-9]+$/), "UserId");
 export const Email = D.brand(D.pattern(/^[^\s@]+@[^\s@]+$/, "expected email"), "Email");
 export type UserId = Infer<typeof UserId>;
 export type Email = Infer<typeof Email>;
-export type User = { readonly id: UserId; readonly email: Email; readonly createdAt: Date; readonly deactivatedAt: Option<Date> };
+// Time in the domain is an epoch-ms Instant brand (domain-types.md); Date never appears in a domain type.
+export const Instant = D.brand(D.map(D.isoDate, (d) => d.getTime()), "Instant");
+export type Instant = Infer<typeof Instant>;
+export type User = { readonly id: UserId; readonly email: Email; readonly createdAt: Instant; readonly deactivatedAt: Option<Instant> };
 
 // domain/errors.ts — the driver's error is wrapped as `cause: unknown`, never typed as pg's error
 export const RepoError = tagged("RepoError")<{ op: string; cause: unknown }>();
@@ -33,15 +36,15 @@ export type UserRepo = {
 export const UserRow = D.struct({
   id: UserId,
   email: Email,
-  created_at: D.isoDate,
-  deactivated_at: D.option(D.isoDate),
+  created_at: Instant,
+  deactivated_at: D.option(Instant),
 });
 export type UserRow = Infer<typeof UserRow>;
 export const rowToUser = (r: UserRow): User => ({ id: r.id, email: r.email, createdAt: r.created_at, deactivatedAt: r.deactivated_at });
 ```
 
 - `RepoError` is for failures the caller cannot act on specifically (connection lost, syntax error, unexpected row shape); it carries the `op` name for logs and the raw `cause` for the edge to inspect. Failures a caller *can* act on (`EmailTaken`, `UserNotFound`) are their own tags, decided inside the adapter.
-- Nullable columns decode to `Option` with `D.option`; ids are brands; timestamps are `D.isoDate` (when the driver yields ISO strings) or `D.integer` (epoch millis). If the driver already returns `Date` objects, use `D.custom((u): u is Date => u instanceof Date, "Date")`.
+- Nullable columns decode to `Option` with `D.option`; ids are brands; timestamps become the `Instant` brand — via `D.map(D.isoDate, (d) => d.getTime())` when the driver yields ISO strings, `D.min(D.integer, 0)` when it yields epoch millis, or `D.map(D.custom((u): u is Date => u instanceof Date, "Date"), (d) => d.getTime())` when it yields `Date` objects. `Date` itself never reaches the domain.
 - Column names stay snake_case in the row type; `rowToUser` is the one place they become domain names. Separate row types per query when the projections differ.
 
 ## 2. The interop edge, once
@@ -96,7 +99,7 @@ export const pgUserRepo = (db: Queryable): UserRepo => ({
       db,
       "users.insert",
       "insert into users (id, email, created_at, deactivated_at) values ($1, $2, $3, $4)",
-      [user.id, user.email, user.createdAt.toISOString(), O.toNullable(O.map(user.deactivatedAt, (d) => d.toISOString()))],
+      [user.id, user.email, new Date(user.createdAt).toISOString(), O.toNullable(O.map(user.deactivatedAt, (d) => new Date(d).toISOString()))],
       signal,
     );
     if (r.ok) return ok(undefined);
@@ -112,7 +115,7 @@ export const pgUserRepo = (db: Queryable): UserRepo => ({
 
 ## 4. Transactions — the workflow owns the boundary
 
-A `WithTransaction` port runs a function with tx-scoped repositories. The function's `Result` decides the outcome: `Ok` commits, `Err` rolls back, and the error flows out unchanged. Repositories never call `begin`/`commit`.
+A `WithTransaction` port runs a body with tx-scoped repositories: `(signal, body)`, the one shape used across this skill and the proof repo. The body's `Result` decides the outcome: `Ok` commits, `Err` rolls back, and the error flows out unchanged. Repositories never call `begin`/`commit`.
 
 ```ts
 import { Async, ok, type AsyncResult } from "two-track";
@@ -121,11 +124,11 @@ import { query, type Pool, type Queryable } from "./pool.ts";
 import type { RepoError, UserRepo } from "./user-row.ts";
 
 export type TxRepos = { readonly users: UserRepo };
-export type WithTransaction = <E, A>(run: (repos: TxRepos, signal: AbortSignal) => AsyncResult<E, A>, signal: AbortSignal) => AsyncResult<E | RepoError, A>;
+export type WithTransaction = <E, A>(signal: AbortSignal, body: (tx: TxRepos) => AsyncResult<E, A>) => AsyncResult<E | RepoError, A>;
 
 type PoolWithClients = Pool & { readonly connect: () => Promise<Queryable & { readonly release: () => void }> };
 
-export const pgWithTransaction = (pool: PoolWithClients): WithTransaction => async (run, signal) => {
+export const pgWithTransaction = (pool: PoolWithClients): WithTransaction => async (signal, body) => {
   const client = await Async.tryPromise(() => pool.connect(), (cause) => ({ _tag: "RepoError" as const, op: "tx.connect", cause }), signal);
   if (!client.ok) return client;
   const c = client.value;
@@ -136,7 +139,7 @@ export const pgWithTransaction = (pool: PoolWithClients): WithTransaction => asy
     return begun;
   }
 
-  const outcome = await run({ users: pgUserRepo(c) }, signal);
+  const outcome = await body({ users: pgUserRepo(c) });
   const finish = outcome.ok ? await query(c, "tx.commit", "commit", [], signal) : await query(c, "tx.rollback", "rollback", [], signal);
   c.release();
   if (!finish.ok) return finish;
@@ -146,14 +149,14 @@ export const pgWithTransaction = (pool: PoolWithClients): WithTransaction => asy
 // workflows/… — the workflow owns the boundary; the repo never calls begin/commit.
 type Deps = { readonly withTransaction: WithTransaction };
 export const transferOwnership = (deps: Deps, signal: AbortSignal) =>
-  deps.withTransaction(async (repos, s) => {
-    const a = await repos.users.findManyByIds([], s);
+  deps.withTransaction(signal, async (tx) => {
+    const a = await tx.users.findManyByIds([], signal);
     if (!a.ok) return a;
     return ok(a.value.length);
-  }, signal);
+  });
 ```
 
-Rules: keep the transaction short and free of external calls (no `fetch` inside `run`); do not nest `withTransaction`; anything that must happen after commit (publish an event, send mail) goes through an outbox row written inside the transaction and relayed by a worker (`concurrency.md`). For the error track to be a rollback, every step inside `run` must return its failure rather than swallow it.
+Rules: keep the transaction short and free of external calls (no `fetch` inside the body); do not nest `withTransaction`; anything that must happen after commit (publish an event, send mail) goes through an outbox row written inside the transaction and relayed by a worker (`concurrency.md`). For the error track to be a rollback, every step inside the body must return its failure rather than swallow it.
 
 ## 5. Pagination and migrations
 
@@ -198,7 +201,7 @@ Keyset pagination (`where (created_at, id) < ($1, $2) order by created_at desc, 
 
 | Tier | What | How |
 |---|---|---|
-| Workflows | logic that uses a repo | the in-memory fake from `capabilities-di.md` (a `Map` in a closure); `withTransaction` fake that just calls `run` |
+| Workflows | logic that uses a repo | the in-memory fake from `capabilities-di.md` (a `Map` in a closure); a `withTransaction` fake that snapshots the maps, runs the body, and restores them on `err` (so atomicity is testable, as the proof repo does) |
 | Row decoders | every `*Row` decoder | fast-check round-trip: generate a domain value, encode to a row shape, decode, compare; plus a fixture of a real row captured once |
 | Adapters | SQL and mapping against a real database | a few integration tests on a local Postgres (`DATABASE_URL` env or testcontainers), each in its own transaction that is rolled back, asserting on decoded domain values |
 | Error translation | `23505` → `EmailTaken` | insert the same email twice in an integration test; assert the tag |

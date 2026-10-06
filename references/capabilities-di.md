@@ -203,7 +203,7 @@ The `declare const` lines stand in for the real `infra/` modules. `main.ts` is a
 |---|---|---|
 | Process (pool, HTTP client, queue connection) | opened in `main.ts`, held in `deps` | `disposers` run in reverse on the shutdown signal |
 | Request (request id, deadline, auth subject) | an explicit `ctx` argument | the request's `AbortSignal` aborts; nothing to dispose |
-| Transaction (tx-scoped repositories) | a `withTransaction(deps, run, signal)` port that hands `run` a repos record bound to the connection | ok commits, err rolls back — see `database.md` |
+| Transaction (tx-scoped repositories) | a `withTransaction(signal, body)` port on `deps` that hands `body` a repos record bound to the connection | ok commits, err rolls back — see `database.md` |
 | Per-call temporaries (an `AbortController` for a timeout) | inside the combinator (`Async.withTimeout`) | the combinator clears it |
 
 Never store request-scoped values in module state or `AsyncLocalStorage` to avoid threading them: implicit context is exactly what makes a function's requirements illegible.

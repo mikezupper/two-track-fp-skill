@@ -239,7 +239,7 @@ packages/
 pnpm-workspace.yaml   packages: ["packages/*"]
 ```
 
-Rules: `domain` and `workflows` have `"dependencies": { "two-track": "…" }` and nothing else; `api` and `ui` depend on them, never on each other; a `test/architecture.test.ts` in the root greps `import` lines to enforce the direction (see `code-review.md` §2).
+Rules: `domain` and `workflows` have `"dependencies": { "two-track": "…" }` and nothing else; `api` and `ui` depend on them, never on each other; `two-track-check --strict` runs per package with its own `two-track-check.json` and enforces the direction (`layer-domain-imports`, `layer-workflows-imports`); the greps in `code-review.md` §2 are the fallback.
 
 ## Checklist
 

@@ -9,6 +9,7 @@ Verified against two-track 0.1.0 (October 2026).
 A brand is a compile-time fiction: `Brand<string, "UserId">` is a string at runtime, which is why it is free. It is also why it can be forged with `as` — so the **only** place a brand is applied is `D.brand`, after the checks that justify it. The self-review grep rejects `as Brand<` and `as unknown as` everywhere else.
 
 ```ts
+import { expect } from "vitest";
 import { D, R, type Infer } from "two-track";
 
 // The decoder IS the smart constructor: checks first, brand last. One definition gives the type,
@@ -23,19 +24,17 @@ export type Cents = Infer<typeof Cents>;
 export type Quantity = Infer<typeof Quantity>;
 
 // Tests and fixtures: go THROUGH the decoder. A fixture that bypasses it tests a type you don't ship.
+// A bad fixture is a bug in the test: fail it with vitest's expect.unreachable — two-track-check's
+// `no-throw` applies inside test files too, deliberately.
 export const mustDecode = <A>(decoder: D.Decoder<A>, raw: unknown): A =>
-  R.unwrapOrElse(decoder.decode(raw), (e) => assertFixture(D.formatIssues(e)));
-const assertFixture = (issues: string): never => {
-  // Test-only helper: a bad fixture is a bug in the test, not an expected error.
-  throw new Error(`fixture does not decode: ${issues}`);
-};
+  R.unwrapOrElse(decoder.decode(raw), (e) => expect.unreachable(`fixture does not decode: ${D.formatIssues(e)}`));
 
 export const alice: Email = mustDecode(Email, "alice@example.com");
 ```
 
 - Name the constant and the type identically (`Email` / `type Email`); `Infer` keeps them in lock-step.
 - Refinement order: shape (`D.string`, `D.integer`) → constraint (`D.pattern`, `D.min`, `D.max`, `D.minLength`, `D.refine`) → `D.brand`. The message you pass is what users see in a 400.
-- `mustDecode` lives in `test/` only. Production code obtains branded values from decoders at boundaries and never constructs them.
+- `mustDecode` lives in `test/` only (it imports vitest). Production code obtains branded values from decoders at boundaries and never constructs them.
 - Regexes in `D.pattern` must be anchored (`^…$`) and should not use flags — the same regex will drive fast-check arbitraries in tests.
 
 ## Money and quantities
@@ -47,7 +46,9 @@ import { ok, err, type Result } from "two-track";
 import { Cents, Quantity } from "./brands.ts";
 import { tagged } from "two-track";
 
-// Money is integer minor units. Arithmetic re-brands the result; the invariant (>= 0) is kept by construction.
+// domain/types.ts — the SAME module as the brand decoders. Arithmetic re-brands its result; the
+// invariant (>= 0) is kept by construction. This file is in two-track-check's `brandFiles`, so the
+// `as Cents` below is allowed here and nowhere else.
 export const addCents = (a: Cents, b: Cents): Cents => (a + b) as Cents;
 export const multiply = (price: Cents, qty: Quantity): Cents => (price * qty) as Cents;
 export const sumCents = (xs: ReadonlyArray<Cents>): Cents => xs.reduce<Cents>(addCents, 0 as Cents);
@@ -61,7 +62,7 @@ export const subtractCents = (a: Cents, b: Cents): Result<ReturnType<typeof Over
 export const applyDiscountBps = (amount: Cents, bps: number): Cents => Math.floor((amount * (10_000 - bps)) / 10_000) as Cents;
 ```
 
-The `as Cents` inside these helpers is the one place a re-brand cast is acceptable: a total function over already-branded inputs whose result provably satisfies the brand. Keep such helpers in one `money.ts` module so the grep allowlist is a single file.
+The `as Cents` inside these helpers is the one place a re-brand cast is acceptable: a total function over already-branded inputs whose result provably satisfies the brand. Keep every such helper in `domain/types.ts` next to the decoders — that file is in `two-track-check`'s default `brandFiles` (`**/decoders.ts`, `**/brands.ts`, `**/domain/types.ts`). A re-brand anywhere else is a `no-brand-cast` error unless you add that file to `brandFiles` in `two-track-check.json`, and you should not: one file is the point.
 
 ## Option, not null
 
@@ -140,6 +141,8 @@ Workflows take a command and return a `Result` of **events**; edges dispatch eve
 ```ts
 import { ok, err, match, type Result, type Tagged, type Option } from "two-track";
 import type { Cents, Email, UserId } from "./brands.ts";
+// Re-brand helpers come from domain/types.ts (a `brandFiles` module); a decision never casts to a brand itself.
+declare const addCents: (a: Cents, b: Cents) => Cents;
 
 // Commands in, events out: the workflow decides; the edge dispatches. Decisions stay pure and testable.
 export type Command = Tagged<"ChangeEmail", { userId: UserId; email: Email }> | Tagged<"TopUp", { userId: UserId; amount: Cents }>;
@@ -160,7 +163,7 @@ export const decide = (account: Option<Account>, cmd: Command): Decision => {
   return match<Command, Decision>(cmd, {
     ChangeEmail: ({ email }) =>
       email === acc.email ? err({ _tag: "NoChange" }) : ok([{ _tag: "EmailChanged", userId: acc.id, from: acc.email, to: email }]),
-    TopUp: ({ amount }) => ok([{ _tag: "BalanceToppedUp", userId: acc.id, newBalance: (acc.balance + amount) as Cents }]),
+    TopUp: ({ amount }) => ok([{ _tag: "BalanceToppedUp", userId: acc.id, newBalance: addCents(acc.balance, amount) }]),
   });
 };
 
@@ -212,8 +215,9 @@ Time in the domain is an epoch-millisecond `Instant` brand. ISO strings are a wi
 ```ts
 import { Cap, D, type Infer } from "two-track";
 
-// Time in the domain is an epoch-millisecond Instant. Wire formats (ISO strings) are decoded at the edge;
-// "now" comes from the Clock capability, never from Date.now().
+// domain/types.ts (a `brandFiles` module): time in the domain is an epoch-millisecond Instant. Wire formats
+// (ISO strings) are decoded at the edge; "now" comes from the Clock capability, never from Date.now().
+// The two `as Instant` below are re-brands of already-valid values and are only allowed in this file.
 export const Instant = D.brand(D.map(D.isoDate, (d) => d.getTime()), "Instant");
 export type Instant = Infer<typeof Instant>;
 
@@ -260,7 +264,7 @@ export const toResponse = (u: User): UserResponse => ({ id: u.id, email: u.email
 ## Checklist
 
 - [ ] No naked `string`/`number` for ids, emails, money, quantities, durations in the domain — brands from decoders
-- [ ] Every brand is produced by `D.brand` after its refinements; no `as Brand<` outside the single re-brand helper module
+- [ ] Every brand is produced by `D.brand` after its refinements; no `as Brand<` outside the `brandFiles` modules configured for `two-track-check` (default `domain/types.ts`, `brands.ts`, `decoders.ts`)
 - [ ] Money is integer minor units; fallible arithmetic returns `Result`
 - [ ] No `null`/`undefined` in domain types; `Option` with `none` singleton; converters only in `infra/`
 - [ ] Every lifecycle is a tagged union with per-state data; transitions return `Result`; reads use exhaustive `match`

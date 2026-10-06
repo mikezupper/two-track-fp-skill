@@ -20,7 +20,7 @@ You build every TypeScript application as a **synchronous pure core wrapped in a
 
 ## Hard rules (non-negotiable)
 
-Every rule has a mechanical check in `references/code-review.md`; several are also ESLint-free greps you add to CI per `references/scaffold.md`.
+Every rule has a mechanical check: `two-track-check --strict` (installed by `references/scaffold.md`, run in CI) for the ones a static rule can see, and the greps in `references/code-review.md` for the rest.
 
 - **Zero runtime dependencies beyond `two-track`** in `domain/` and `workflows/`. Infrastructure adapters may depend on drivers (`pg`, `undici`, …) and nothing else FP-flavoured: no lodash, no Ramda, no fp-ts, no neverthrow, no Zod. If a helper is missing, write it in `src/lib/` (10–150 lines) and test it.
 - **No `throw`, no `try`, no `.catch(`** in application code. The only exceptions are inside `R.fromThrowable`, `Async.fromPromise`, and `Async.tryPromise` calls at the interop edge, each converting to a tagged error. `assertNever` is the one sanctioned defect.
@@ -34,7 +34,7 @@ Every rule has a mechanical check in `references/code-review.md`; several are al
 - **Every fan-out has explicit `{ concurrency: n }`; every external call has `Async.withTimeout`; retries are transient-only with `Async.backoff` and injected `Random`.**
 - **Strict TypeScript:** `strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `noPropertyAccessFromIndexSignature`, `erasableSyntaxOnly`. No `any`, no `@ts-ignore`, no non-null `!`.
 - **Fakes, not mocks.** Test doubles are plain objects implementing your capability interfaces; `Cap.controlledClock`, `Cap.instantSleeper`, `Cap.manualSleeper`, `Cap.seededRandom`, `Cap.sequentialIds` for the library's capabilities.
-- **Run `two-track-check --strict` before declaring any work done.** It is TypeScript's missing `#[must_use]`: an ignored `Result` or an un-awaited `AsyncResult` is an error, not a style note. Every other hard rule above is a rule in it too, with the fix in the message. A suppression comment needs a reason.
+- **Run `two-track-check --strict` before declaring any work done.** It is TypeScript's missing `#[must_use]`: an ignored `Result` or an un-awaited `AsyncResult` is an error, not a style note. The mechanical ones are rules in `two-track-check`; the rest are the code-review greps and reviewer checks. A suppression comment needs a reason.
 - **Prove laws, don't assert examples.** Every custom combinator gets `functorLaws`/`monadLaws` and every decoder gets `decoderRoundTrip` from `two-track/testing` — one line each.
 
 ## Decision table
@@ -65,7 +65,8 @@ Every rule has a mechanical check in `references/code-review.md`; several are al
 | Burst smoothing | `Lane.debounce` (trailing, via `Sleeper`) / `Lane.throttle` (leading, via `Clock`) |
 | Bounded concurrency with neither a list nor a trigger | `Lane.semaphore(n).run(f)` |
 | Proving a custom combinator or decoder | `two-track/testing`: `functorLaws`, `monadLaws`, `decoderRoundTrip`, `decoderNeverThrows`, `arbDecoded` |
-| Checking an app for the foot-guns types cannot see | `npx two-track-check --strict` (ignored Results, layers, platform calls, brand casts, `Promise.all`, `fetch` without signal, `default:` without `assertNever`) |
+| Checking an app for the foot-guns types cannot see | `npx two-track-check --strict` (ignored Results, layers, platform calls, `process.env`, brand casts, `Promise.all`, `fetch` without signal, `default:` without `assertNever`) |
+| Hot boundary decoding many valid objects | `D.compile(decoder)` once at module level (no-op where `new Function` is forbidden); see `references/performance.md` |
 | Unbounded data | `AsyncIterable` (an `async function*` adapter in `infra/`) + `for await` in the shell; never buffer it all |
 | Hot loop over many items | plain early-return functions, no closures/spread/allocation per element (`references/performance.md`) |
 | A function that provably cannot fail | return `A`, not `Result<never, A>` |
@@ -164,8 +165,12 @@ export type Deps = {
   readonly sleeper: Cap.Sleeper;
 };
 
+// The one sanctioned re-brand: integer arithmetic on values already decoded as Cents. Lives in domain/types.ts
+// (a `brandFiles` module for two-track-check), next to the decoder — shown inline here only to keep the snippet whole.
+const cents = (n: number): Cents => Math.max(0, Math.trunc(n)) as Cents;
+
 // Pure core: total, synchronous, trivially property-testable.
-export const total = (prices: ReadonlyArray<Cents>): Cents => prices.reduce((a, b) => a + b, 0) as Cents;
+export const total = (prices: ReadonlyArray<Cents>): Cents => cents(prices.reduce((a, b) => a + b, 0));
 
 // Workflow: the railway. Early returns are the switch; every failure is in the signature.
 export const checkout = async (deps: Deps, skus: ReadonlyArray<Sku>): AsyncResult<CheckoutError, Cents> => {

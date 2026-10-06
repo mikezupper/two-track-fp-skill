@@ -53,11 +53,11 @@ Honest reading: the interpreter is 20–35% faster than Zod and Valibot and the 
 4. It compiles the structural subset (struct, array, primitives + refinements, optional, nullable, option, literal); `record`, `taggedUnion`, `oneOf`, `map`, `andThen`, `json`, `lazy` are called through the interpreter from the generated code, so a schema dominated by those gains less.
 5. Regex patterns remain the single largest cost on the bench schema (~160 ns of raw `regex.test` for three patterns); keep hot wire shapes flat and keep cosmetic normalization out of the per-object path.
 
-**Decoder and async CPU overhead in isolation** (`pnpm bench:hot`, Node 24): a 4-field struct decodes in ~110 ns; an array of structs ~100 ns per element; error accumulation on an array of invalid items ~35 ns per issue; `mapConcurrent` and `validateConcurrent` add ~120 ns per item with immediately-resolved callbacks; a semaphore `run` with an immediate callback ~650 ns. None of these is visible next to a network call; all of them matter inside a tight loop over in-memory data.
+**Decoder and async CPU overhead in isolation** (`pnpm bench:hot`, Node 24, 2026-10-06): a two-field struct decodes in ~75 ns interpreted and ~20 ns through `D.compile`; an array of structs ~90 ns per element; error accumulation on an array of invalid items ~90 ns per issue; `mapConcurrent` and `validateConcurrent` add ~150–160 ns per item with immediately-resolved callbacks; a semaphore `run` with an immediate callback ~1.2 µs. None of these is visible next to a network call; all of them matter inside a tight loop over in-memory data.
 
 **Lane overhead per trigger** (`pnpm bench:lanes`, Node 24, ratio against a direct call in the same run): `exhaustLane` 0.7x (rejections are a shared `Busy`), `queueLane` 2.7x (~750 ns), `throttle` 3.1x, `semaphore` 7x (~2 µs; it was 376x before its waiter queue was made linear — `Array.shift()` is O(n) on large V8 arrays, a pattern worth grepping your own `src/lib/` for), `debounce` 27x and `switchLane` 36x (~8–10 µs). Lanes belong on user-rate triggers; bounded per-row work uses `mapConcurrent` or a semaphore.
 
-**Consumer bundle sizes** (`pnpm bench:bundle`, minified bytes, esbuild root-namespace import → subpath import): Result `ok`/`err`/`andThen` 1,551 → 117; struct decoder 4,279 → 1,124; primitive decoder 4,234 → 304; async interop 3,102 → 170; concurrent map 3,096 → 642; switch lane 2,744 → 731. Rolldown prunes namespaces itself (114 / 1,119 / 301 / 176 / 653 / 769). Everything the library exports is ~15 kB minified, ~5.4 kB gzip. Rule: browser and edge code imports from subpaths (`references/scaffold.md` §1b).
+**Consumer bundle sizes** (`pnpm bench:bundle`, 2026-10-06 after the decoder rewrite and `D.compile`, minified bytes, esbuild root-namespace import → subpath import): Result `ok`/`err`/`andThen` 1,551 → 117; struct decoder 10,590 → 2,300; primitive decoder 10,545 → 1,038; async interop 3,280 → 170; concurrent map 3,274 → 733; switch lane 2,929 → 731. Rolldown prunes namespaces itself (114 / 2,286 / 1,026 / 176 / 744 / 769). Everything the library exports, `compile` included, is ~20.5 kB minified, ~7.2 kB gzip; `compile` is tree-shaken from subpath consumers that do not import it. Rule: browser and edge code imports from subpaths (`references/scaffold.md` §1b).
 
 ## The rules that follow
 
@@ -198,7 +198,7 @@ Both engines agree on the ranking; they disagree on the magnitude of the bad enc
 
 - [ ] Hot paths are identified by a profile, not a hunch, and each has a `bench/` script with a ratio assertion
 - [ ] Per-element functions use early returns; no closures, spread, `.map().filter()` chains, or `Object.freeze` per item
-- [ ] Zero generators anywhere in `src/` (grep `function\*|yield`)
+- [ ] Zero generators for sequencing anywhere in `src/` (grep `function\*|yield`); the one allowed form is an `async function*` stream adapter in `infra/` or `lib/`
 - [ ] Collections use `R.traverse` / pre-sized loops rather than `R.all(items.map(f))` on hot paths
 - [ ] Every fan-out states `concurrency`, sized to the downstream and documented in a comment
 - [ ] JSON is parsed once at the boundary; nothing re-serializes internally

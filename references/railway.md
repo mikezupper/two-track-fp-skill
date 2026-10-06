@@ -112,7 +112,7 @@ There is no do-notation (`yield*`) in this library and none should be hand-rolle
 
 | You want | Sync | Async | Notes |
 |---|---|---|---|
-| Heterogeneous tuple, first error wins | `R.all([a, b] as const)` | `Async.all([pa, pb])` | tuple-typed result |
+| Several results, first error wins | `R.all([a, b] as const)` (tuple-typed) | `Async.all([pa, pb])` (homogeneous `E`/`A`; for a heterogeneous pair use two `await`s) | only the sync form keeps per-element types |
 | Apply `f` to each, stop at first error | `R.traverse(items, f)` | `Async.mapConcurrent(items, f, { concurrency })` | sequential workflows; async version aborts in-flight work |
 | Apply `f` to each, report **every** error | `R.validateAll(items, f)` | `Async.validateConcurrent(items, f, { concurrency })` | boundaries, forms, imports; error is `NonEmptyArray<E>` |
 | Never fail, split outcomes | `R.partition(results)` | run `validateConcurrent`, then inspect | batch jobs that must finish |

@@ -66,10 +66,10 @@ The claim that the railway pattern is free was measured, not assumed. Three-step
 | `throw` / `try` / `catch` | 297–341 ms | 57–79 ms |
 | `Object.freeze` on every result | 116–123 ms | 194–213 ms |
 | Generator do-notation (`safeTry` / `Effect.gen` style) | 969 ms | 464–488 ms |
-| Ramda `pipeWith(chain)` | 239 ms | 221 ms |
-| Effect 4, `Effect.gen` + `runSync` | 1923 ms | 969 ms |
+| Ramda `pipeWith(chain)` | 319 ms | 244 ms |
+| Effect 4, `Effect.gen` + `runSync` | 2392 ms | 1410 ms |
 
-The Result pattern costs about 12 nanoseconds per pipeline. The libraries and idioms around it are what cost: generators 40–80x, freezing 10–20x, exceptions 5–30x, currying 20x, a fiber runtime 100x. So this skill does not *discourage* those constructs; it **bans** them, and the review pass greps for them.
+The Result pattern costs about 12 nanoseconds per pipeline. The libraries and idioms around it are what cost: generators 40–80x, freezing 10–20x, exceptions 5–30x, currying ~30x, a fiber runtime 100–200x. So this skill does not *discourage* those constructs; it **bans** them, and the review pass greps for them.
 
 This is a CPU-bound microbenchmark. In an I/O-bound service none of these rows is visible next to a database round trip — which is exactly why the skill also insists on bounded concurrency, timeouts, and no JSON round trips inside the process, where the real time goes.
 
@@ -89,7 +89,7 @@ Stated in `SKILL.md`, enforced three ways: the strict `tsconfig` in `references/
 | Banned | Instead |
 |---|---|
 | `throw`, `try/catch`, `.catch()` | Tagged errors on the track; `R.fromThrowable` / `Async.tryPromise` at the interop edge only |
-| Generators (`function*`, `yield`) | Early return; `await` + `Async.andThen` |
+| Generators (`function*`, `yield`) for sequencing | Early return; `await` + `Async.andThen` (an `async function*` stream adapter in `infra/`/`lib/` is the one exception) |
 | `Object.freeze` | `readonly` types |
 | Classes for data | Plain objects with `_tag` / `ok` / `some` discriminants |
 | `null` / `undefined` in domain types | `Option<A>` |
@@ -99,7 +99,7 @@ Stated in `SKILL.md`, enforced three ways: the strict `tsconfig` in `references/
 | `Promise.all` over a list | `Async.mapConcurrent(items, f, { concurrency })` |
 | External calls without a timeout | `Async.withTimeout` + threaded `AbortSignal` |
 | lodash, Ramda, fp-ts, neverthrow, Zod, any FP/utility runtime dependency | `two-track`, array methods, or 20 lines in `src/lib/` |
-| Mocking libraries | Fakes as plain objects; `Cap.controlledClock` / `instantSleeper` / `seededRandom` / `sequentialIds` |
+| Mocking libraries | Fakes as plain objects; `Cap.controlledClock` / `instantSleeper` / `manualSleeper` / `seededRandom` / `sequentialIds` |
 | `default:` over a domain union | `match` / `matchBy` / `assertNever` |
 | `console.log` | A `Logger` port, used at the edge |
 | An ignored `Result` / un-awaited `AsyncResult` | `two-track-check --strict` fails the build (`ignored-result`, `floating-async-result`) |
@@ -111,7 +111,7 @@ Stated in `SKILL.md`, enforced three ways: the strict `tsconfig` in `references/
 |---|---|
 | ROP / two-track `Result` | `Result<E, A>` with boolean `ok`; `R.andThen`; early return; `AsyncResult` for the shell |
 | Designing with types | `D.brand` on refined decoders; `tagged` unions; `Option`; `readonly` records |
-| Parse, don't validate | `D.struct`/`D.taggedUnion`/`D.json` at every boundary; `D.formatIssues` for 400s |
+| Parse, don't validate | `D.struct`/`D.taggedUnion`/`D.json` at every boundary; `D.formatIssues` for 400s; `D.compile` once at module level for a hot boundary |
 | Validation that reports everything | `D.struct` accumulates; `R.validateAll`; `Async.validateConcurrent` |
 | Recipe for a functional app | domain/ → workflows/ → infra/ → `main.ts`; ports as interfaces; `deps` record |
 | Commands in, events out | Workflows return a tagged event union; edges dispatch with `match` |
@@ -210,7 +210,7 @@ Progressive disclosure, which is why it is a folder and not one big file:
 
 **Maintaining**
 
-- The skill pins its knowledge to `two-track` 0.1.x. On each library release, re-run the compile check of every reference snippet against the new version (the method is in the library's `CONTRIBUTING.md`) and update the "Verified against" notes.
+- The skill pins its knowledge to `two-track` 0.1.x. On each library release, re-run `node scripts/verify-snippets.mjs /path/to/two-track` against the new version and update the "Verified against" notes.
 
 ## Version policy
 

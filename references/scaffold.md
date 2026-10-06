@@ -1,6 +1,6 @@
 # Project Scaffold — and the Mechanical Enforcement Layer
 
-Everything here exists so the SKILL.md hard rules **fail the build** rather than rely on discipline; a rule with no enforcer rots. The philosophy is Wlaschin's *functional core, imperative shell* laid out as directories whose dependency direction a 60-line script checks on every run. The toolchain is deliberately small: TypeScript 7 does the type-level enforcement, `two-track-check` (a separate dev-time package with the type-aware rules TypeScript 7 alone cannot express) does architecture and taste, vitest + fast-check + `two-track/testing` do the proving.
+Everything here exists so the SKILL.md hard rules **fail the build** rather than rely on discipline; a rule with no enforcer rots. The philosophy is Wlaschin's *functional core, imperative shell* laid out as directories whose dependency direction `two-track-check` enforces on every run (`layer-domain-imports`, `layer-workflows-imports`). The toolchain is deliberately small: TypeScript 7 does the type-level enforcement, `two-track-check` (a separate dev-time package with the type-aware rules TypeScript 7 alone cannot express) does architecture and taste, vitest + fast-check + `two-track/testing` do the proving.
 
 Verified against two-track 0.1.0 (October 2026) with TypeScript 7.0.2, vitest 5.0.3, fast-check 4.10.2, Node 24.
 
@@ -52,7 +52,7 @@ import { struct, integer, nonEmptyString } from "two-track/decode";
 import { mapConcurrent } from "two-track/async";
 ```
 
-Measured on the library's bundle bench: a Result consumer is 117 B through the subpath versus 1,551 B through the root namespace with esbuild; a struct decoder is 1,124 B versus 4,279 B. Rolldown prunes namespaces itself, so there the difference is small. Server code may keep the namespaces; the types are identical either way, and `two-track-check` recognizes both import styles.
+Measured on the library's bundle bench (2026-10-06, after the decoder rewrite and `D.compile`): a Result consumer is 117 B through the subpath versus 1,551 B through the root namespace with esbuild; a struct decoder is 2,300 B versus 10,590 B; a primitive decoder 1,038 B versus 10,545 B. Rolldown prunes namespaces itself, so there the difference is small. Server code may keep the namespaces; the types are identical either way, and `two-track-check` recognizes both import styles.
 
 ## 2. tsconfig.json — strictness is part of the skill
 
@@ -94,12 +94,13 @@ src/
 ├── infra/         implementations of the ports: db, http clients, queues, clock adapters.
 │                  the ONLY place drivers are imported and try/catch/.catch appear (inside fromThrowable/tryPromise).
 ├── lib/           tiny project-local helpers (10–150 lines each, tested). no I/O.
-├── http/ | cli/   the edge: decode request → workflow → encode response/exit code. imports everything.
+│                  (the HTTP/CLI edge — decode request → workflow → encode response — lives in infra/,
+│                  e.g. infra/http.ts, so the checker's infra exemptions and layer rules apply to it)
 └── main.ts        the ONE composition root: decode env, build deps, start, stop.
 test/   bench/   two-track-check.json
 ```
 
-Edges are one-way: `main → http → workflows → domain`, `main → infra → domain`. `workflows/` names ports (interfaces in `domain/ports.ts`) that `infra/` implements; it never imports `infra/`.
+Edges are one-way: `main → infra (edge) → workflows → domain`, `main → infra → domain`. `workflows/` names ports (interfaces in `domain/ports.ts`) that `infra/` implements; it never imports `infra/`.
 
 ```ts
 // src/main.ts — the ONE composition root: decode config, build deps, start, stop.
@@ -210,9 +211,9 @@ Keep the same `pnpm check` locally as the definition of done; CI runs nothing a 
 
 - [ ] `two-track` is the only runtime dependency reachable from `domain/` and `workflows/`; no lodash/Ramda/fp-ts/neverthrow/Zod anywhere
 - [ ] tsconfig has `strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `noPropertyAccessFromIndexSignature`, `erasableSyntaxOnly`, `.ts` imports
-- [ ] Layout is `domain/ workflows/ infra/ lib/ <edge>/ main.ts`; `workflows/` never imports `infra/`
+- [ ] Layout is `domain/ workflows/ infra/ lib/ main.ts` with the HTTP/CLI edge inside `infra/`; `workflows/` never imports `infra/`
 - [ ] `two-track-check.json` describes the layers; `pnpm lint` runs `two-track-check --strict .`; zero findings or each suppression has a reason
 - [ ] `process.env` is read only in `main.ts`; one composition root builds `deps`
 - [ ] vitest coverage thresholds set; fast-check installed; no mocking library
 - [ ] CI runs typecheck, two-track-check, tests with coverage, build — the same as `pnpm check`
-- [ ] No ESLint config present until typescript-eslint supports the project's TypeScript; the four rules to add then are noted
+- [ ] No ESLint config present until typescript-eslint supports the project's TypeScript; the three hygiene rules to add then are noted in §6
