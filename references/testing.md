@@ -16,7 +16,9 @@ Tier 1 is large *because* logic was pushed into the pure core. If a calculation 
 
 ## Arbitraries live next to decoders
 
-There is no schema runtime to derive generators from, so each decoder gets a hand-written fast-check arbitrary in the same module, and the arbitrary **goes through the decoder** so every generated value is valid by construction. A generator that bypasses the decoder tests a type you don't ship. The shipped form of the `viaDecoder` helper below is `arbDecoded` from `two-track/testing`; the hand-written version is shown so the mechanism is visible.
+There is no schema runtime to derive generators from, so each decoder gets a hand-written fast-check arbitrary in the same module, and the arbitrary **goes through the decoder** so every generated value is valid by construction. A generator that bypasses the decoder tests a type you don't ship. `arbDecoded` from `two-track/testing` is the shipped form of the `viaDecoder` helper below, and it is the right input for the other `two-track/testing` helpers — but it returns a structural `Arb<T>`, which `fc.property`, `fc.record` and `fc.uniqueArray` do not accept. For arbitraries you will hand back to fast-check, use the local `viaDecoder` (a real `fc.Arbitrary`), as the proof repo had to.
+
+Two hazards, both met in practice: a `filter` that rejects **always** (a value fed through the wrong decoder, say) is not a failed property but a synchronous infinite loop that `--testTimeout` cannot interrupt — fast-check's "filters must reject rarely" is a hard rule; and `two-track-check` applies `no-throw` and `no-non-null` inside test files too (only `Object.freeze`, platform calls and `@ts-` suppressions are test-exempt), so fail a fixture with `expect.unreachable()` and narrow with a check rather than `!`.
 
 ```ts
 // Arbitraries next to decoders: two ways to generate values that are valid BY CONSTRUCTION.

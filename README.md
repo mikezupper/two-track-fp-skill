@@ -16,7 +16,9 @@
 
 A [Claude Code skill](https://code.claude.com/docs/en/skills) that makes an AI coding agent build **every** TypeScript application — backend services, CLIs, libraries, browser and edge-worker code — as a synchronous pure core wrapped in an async capability shell, with every failure travelling on a typed error track, using the [`two-track`](https://github.com/mikezupper/two-track) library and **nothing else at runtime**. Railway-oriented error handling, parse-don't-validate boundaries, illegal-states-unrepresentable domain modeling, capability-record dependency injection, property-based testing, a measured performance discipline, and a production checklist treated as the definition of done.
 
-> **Reference implementation:** [two-track](https://github.com/mikezupper/two-track) — the ~900-line library this skill is built around, with its own benchmarks, decision records, and a worked checkout example. The library's README is the system of record for the measurements and decisions summarized here.
+> **Reference implementation:** [two-track](https://github.com/mikezupper/two-track) — the library this skill is built around, with its own benchmarks, decision records, and a worked checkout example. The library's README is the system of record for the measurements and decisions summarized here.
+>
+> **Proof repo:** [two-track-fp-skill-examples](https://github.com/mikezupper/two-track-fp-skill-examples) — a full commerce API (catalog, auth, cart, atomic checkout, order history; `node:http` + `node:sqlite`, one runtime dependency) built strictly under this skill, checked by `two-track-check --strict` in CI, with property, fake-driven and real-HTTP test suites. The bugs found building it — five by the checker, four by the tests — were fed back into these references and the library.
 
 It is the third member of a family. Same philosophy, three realizations:
 
