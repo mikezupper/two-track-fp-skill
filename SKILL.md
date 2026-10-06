@@ -138,7 +138,7 @@ Every rule has a mechanical check in `references/code-review.md`; several are al
 - **No schema-derived test generators.** fast-check arbitraries are written next to each decoder with a round-trip property tying them together.
 - **No enforced purity.** The compiler cannot see `Date.now()`. The `no-platform-calls` rule in `two-track-check` (and the grep fallback) is load-bearing.
 - **No `#[must_use]`.** TypeScript lets you drop a `Result` on the floor. `two-track-check`'s `ignored-result` / `floating-async-result` rules are the substitute; run them.
-- **What you get in exchange:** ~12 ns per three-step railway, zero runtime, one dependency of ~900 readable lines, the same build in browsers, workers, edge runtimes, Bun, and Node, and types you can read without a PhD.
+- **What you get in exchange:** ~12 ns per three-step railway, zero runtime, one dependency of ~2,100 readable lines, the same build in browsers, workers, edge runtimes, Bun, and Node, and types you can read without a PhD.
 
 ## Canonical style
 

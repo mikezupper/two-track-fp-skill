@@ -1,6 +1,6 @@
 # Performance — Measured, Not Hoped
 
-The railway pattern is free; what costs is the encoding you pick and the allocations you add per element. This file states the numbers the design rests on, the rules that follow from them, how to find the paths where they matter, and when to stop optimizing JavaScript and reach for Rust. Every number comes from a script you can re-run (`two-track/bench/encodings.ts`, `bench/cross-library.mjs`, `docs/references/benchmarks.md`). Verified against two-track 0.1.0 (October 2026).
+The railway pattern is free; what costs is the encoding you pick and the allocations you add per element. This file states the numbers the design rests on, the rules that follow from them, how to find the paths where they matter, and when to stop optimizing JavaScript and reach for Rust. Every number comes from a script you can re-run (`two-track/bench/encodings.ts`, `bench/cross/` (a workspace with pinned Zod/Valibot/ArkType/Ramda/Effect), `docs/references/benchmarks.md`). Verified against two-track 0.1.0 (October 2026).
 
 ## What the benchmarks say
 

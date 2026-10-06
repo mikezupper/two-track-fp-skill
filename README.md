@@ -128,7 +128,7 @@ Honesty is a feature of this skill. From `SKILL.md`:
 - **No nominal types.** A brand can be forged with `as`; the grep for `as Brand<` is load-bearing.
 - **No schema-derived test generators.** Arbitraries are written next to decoders with a round-trip property tying them together.
 - **No enforced purity.** The compiler cannot see `Date.now()`; the platform-call grep is load-bearing.
-- **What you get in exchange:** ~12 ns per three-step railway, zero runtime, one dependency of ~900 readable lines, the same build in browsers, workers, edge runtimes, Bun, and Node.
+- **What you get in exchange:** ~12 ns per three-step railway, zero runtime, one dependency of ~2,100 readable lines, the same build in browsers, workers, edge runtimes, Bun, and Node.
 
 This is **checked FP, not enforced FP**. If the compiler must be the gatekeeper, use `rust-fp-skill`. If you want effects in the types within TypeScript and can pay the runtime, use `effect-fp-skill`.
 

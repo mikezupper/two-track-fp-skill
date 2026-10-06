@@ -78,7 +78,7 @@ export const withDefaults = (p: Pagination): { readonly page: number; readonly p
 
 ## Environment and configuration
 
-Decode `process.env` **once**, in `main.ts`, into a typed `Config` that is passed down through `deps`. Nothing else reads `process.env` (the invariants script enforces it). Defaults are `D.map` over an `optional` field. Secrets are a brand whose only producer is this decoder.
+Decode `process.env` **once**, in `main.ts`, into a typed `Config` that is passed down through `deps`. Nothing else reads `process.env` (`two-track-check`'s `no-process-env` rule reports any read outside the composition root). Defaults are `D.map` over an `optional` field. Secrets are a brand whose only producer is this decoder.
 
 ```ts
 import { D, type Infer } from "two-track";

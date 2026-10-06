@@ -156,13 +156,13 @@ Save it as `two-track-check.json` at the project root and run `pnpm lint` (`two-
 |---|---|
 | Must-use (type-aware) | `ignored-result` — a `Result` (or an array/promise of Results, e.g. `items.map(fallible);`) used as a statement; `floating-async-result` — an un-awaited promise; `ignored-result-in-callback` — a callback returning a Result where the callee expects `void` (`items.forEach(fallible)`); `floating-async-callback` — `forEach(async …)`. `void expr;` is an explicit, allowed discard |
 | Banned constructs | `no-throw`, `no-try`, `no-catch`, `no-generators` (except an `async function*` stream adapter in `infra/`/`lib/`), `no-freeze`, `no-class`, `no-any`, `no-non-null`, `no-ts-suppress`, `no-console` |
-| Purity | `no-platform-calls` — `Date.now`, `new Date()`, `Math.random`, `randomUUID`, timers, `fetch` outside `infra/`, `lib/`, `main.ts` |
+| Purity | `no-platform-calls` — `Date.now`, `new Date()`, `Math.random`, `randomUUID`, `getRandomValues`, `performance.now`, timers, `fetch` outside `infra/`, `lib/`, `main.ts`; `no-process-env` — the environment is read only in the composition root |
 | Layers | `layer-domain-imports` (domain imports only `two-track` and itself), `layer-workflows-imports` (never `infra/`, `node:`, or drivers) |
 | Brands | `no-brand-cast` — `as <BrandedType>` / `as Brand<` / `as unknown as` outside `brandFiles` |
 | Concurrency | `no-bare-promise-all`, `fetch-needs-signal`, `switch-default-without-assert-never` |
 | Review (non-failing unless `--strict`) | `review-unwrap-or`, `review-decode-unknown` |
 
-Suppress one line with `// two-track-check-allow <rule-id> <reason>`; a suppression without a reason is itself an error, and the summary counts them so a reviewer can see how many exceptions the codebase carries. `--json` emits machine-readable findings for CI annotations.
+Suppress one line with `// two-track-check-allow <rule-id> <reason>`; a suppression without a reason is itself an error (`allow-needs-reason`), and the summary counts them so a reviewer can see how many exceptions the codebase carries. `--json` emits machine-readable findings for CI annotations.
 
 ## 5. vitest config and coverage thresholds
 
