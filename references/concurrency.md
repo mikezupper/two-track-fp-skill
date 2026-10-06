@@ -25,7 +25,8 @@ export const getJson = (url: string, signal: AbortSignal): AsyncResult<FetchErro
   );
 
 // Bounded, fail-fast fan-out: the first error aborts in-flight requests and stops launching more.
-export const fetchAll = (urls: ReadonlyArray<string>, parent: AbortSignal): AsyncResult<FetchError, unknown[]> =>
+// With a parent signal the union gains Async.Aborted: a cancelled fan-out is a failure, never a partial success.
+export const fetchAll = (urls: ReadonlyArray<string>, parent: AbortSignal): AsyncResult<FetchError | Async.Aborted, unknown[]> =>
   Async.mapConcurrent(urls, (url, _i, signal) => getJson(url, signal), { concurrency: 8, signal: parent });
 
 // Accumulating fan-out for batch jobs: every row runs, every failure is reported.
@@ -45,7 +46,7 @@ export const profilePage = async (
 | Need | Reach for | Semantics |
 |---|---|---|
 | Apply a fallible async fn to many items | `Async.mapConcurrent(items, f, { concurrency, signal? })` | bounded; first error wins; aborts in-flight via the signal passed to `f`; results in input order |
-| Same, but report every failure | `Async.validateConcurrent(items, f, { concurrency })` | bounded; runs everything; `Err<NonEmptyArray<E>>` or all values |
+| Same, but report every failure | `Async.validateConcurrent(items, f, { concurrency })` | bounded; runs everything; `Err<NonEmptyArray<E>>` or all values; with a `signal`, `Aborted` once the caller cancels (no new item starts) |
 | A few heterogeneous promises you already started | `Async.all([p1, p2])` | first error wins; use a tuple cast or separate awaits for heterogeneous types |
 | Sequential dependency | `await` + early return, or `Async.andThen` | the railway |
 | CPU-bound loop over many items | plain synchronous early-return functions (`performance.md`) | no promises at all |

@@ -136,7 +136,7 @@ type FetchError = { readonly _tag: "FetchFailed"; readonly id: string };
 declare const fetchOne: (id: string, signal: AbortSignal) => AsyncResult<FetchError, Fetched>;
 
 // mapConcurrent fails fast and aborts in-flight work; validateConcurrent runs everything and reports all errors.
-export const fetchAllFailFast = (ids: ReadonlyArray<string>, signal: AbortSignal): AsyncResult<FetchError, Fetched[]> =>
+export const fetchAllFailFast = (ids: ReadonlyArray<string>, signal: AbortSignal): AsyncResult<FetchError | Async.Aborted, Fetched[]> =>
   Async.mapConcurrent(ids, (id, _index, s) => fetchOne(id, s), { concurrency: 8, signal });
 export const fetchAllReport = (ids: ReadonlyArray<string>): AsyncResult<NonEmptyArray<FetchError>, Fetched[]> =>
   Async.validateConcurrent(ids, (id, _index, s) => fetchOne(id, s), { concurrency: 8 });
