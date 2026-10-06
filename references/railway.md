@@ -296,6 +296,7 @@ Name the union (`ReserveError`) next to the errors and reuse it; the edge's `mat
 
 ## Checklist
 
+- [ ] At every interop edge, `signal.aborted` is checked before a rejection is translated: a cancelled request must surface as `Aborted`, not as the upstream error that the cancellation caused (the edge app found this as a 502 where a 499 belonged)
 - [ ] Every `Async.retry` names its `retriable` predicate (required); nothing retries validation or `NotFound`
 - [ ] A `retry` given a `signal` handles `Aborted` at the edge (the union is `E | Aborted` only then); cancellation is never inferred from "the last error"
 

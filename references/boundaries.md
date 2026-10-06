@@ -290,6 +290,8 @@ export const ImportRowFast = D.compile(ImportRow);
 
 Call `ImportRowFast.decode` on the hot path and `ImportRow` everywhere else; they are interchangeable. Do not compile in a loop or per request — compilation is a one-time cost — and measure before adopting it in edge runtimes, where it silently falls back (`references/performance.md`).
 
+Place the `compile` call in the module that uses it on the hot path, not in a shared domain file: a browser bundle that imports the domain module for its types and decoders would otherwise carry the 4 kB compiler for a call it never makes (esbuild does not drop an unused export of a local module even with `/* @__PURE__ */`). The proof repo's edge app shrank its client bundle by a third by moving one `D.compile` from `domain/catalog.ts` to `workflows/search.ts`.
+
 ## Checklist
 
 - [ ] A hot boundary (bulk import, stream, cache rebuild) uses `D.compile(decoder)` created once at module level; everything else uses the interpreter

@@ -372,6 +372,10 @@ The 1 ms `tick` is the one place a timer is acceptable in a test file: it yields
 
 Example tests of retry, timeouts and lanes show the schedules you thought of. The bugs live in the schedules you did not — a downstream consumer found that `Async.retry` ran one extra attempt when cancelled during its backoff wait, a case no example covered. For anything that sleeps, races or coordinates triggers, generate the schedule: a fast-check `asyncProperty` over a random sequence of events (call, resolve run *i*, fire pending sleep *j*, advance the clock, abort) driven through `Cap.manualSleeper()` and `Cap.controlledClock()`, asserting the invariants after every step and the leak conditions at the end (`sleeper.pending()` empty, no abort listeners left on a counting signal wrapper). The library's own `test/*.properties.test.ts` are the template, and the library repo's own invariants script (its self-check, not something an app installs) refuses a new export of `async`/`lanes`/`capabilities` without one; adopt the same rule for your `src/lib/` helpers.
 
+## Testing the `D.compile` fallback (CSP)
+
+`D.compile` returns the interpreter unchanged where `new Function` is forbidden, and that path deserves a test. The naive recipe — stub the `Function` global, `vi.resetModules()`, re-import the app — breaks Node's module loader while the stub is live during a large import graph. The recipe that works: stub `Function`, import only `two-track/decode` (its probe runs at that moment), unstub, then import the app; and set `server.deps.inline: ["two-track"]` in the vitest config so `resetModules` re-evaluates the library's probe instead of a cached copy.
+
 ## Test-only immutability check
 
 `Object.freeze` is banned in `src/` (decision 0003: 10–20x measured). In tests it is free and useful: a frozen fixture makes any accidental mutation throw under strict-mode ESM.

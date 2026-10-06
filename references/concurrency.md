@@ -286,6 +286,23 @@ Cost, measured in the library (`pnpm bench:lanes`, Node 24): `queueLane`, `throt
 
 Testing lanes needs no real time: `Cap.manualSleeper()` fires debounce timers when the test says so, `Cap.controlledClock()` moves the throttle window, and deferred promises stand in for in-flight work. Assert the tag of the rejected call, that the superseded run observed `signal.aborted`, and that the lane-level `signal` aborts everything.
 
+### Cancellation at the interop edge
+
+When a request is cancelled mid-flight, the underlying `fetch` or driver rejects, and `Async.tryPromise` will faithfully translate that rejection into your upstream error — unless you look at the signal first. The proof repo's edge worker returned 502 `UpstreamUnavailable` for a client that had simply gone away. Map in this order: if `signal.aborted`, the outcome is `Aborted`; only then translate the rejection into the port's error.
+
+```ts
+import { Async, err, ok, tagged, type AsyncResult } from "two-track";
+
+const UpstreamUnavailable = tagged("UpstreamUnavailable")<{ cause: string }>();
+type UpstreamUnavailable = ReturnType<typeof UpstreamUnavailable>;
+
+export const fetchUpstream = async (url: string, signal: AbortSignal): AsyncResult<UpstreamUnavailable | Async.Aborted, unknown> => {
+  const r = await Async.tryPromise((s) => fetch(url, { signal: s }).then((res) => res.json()), (cause) => UpstreamUnavailable({ cause: String(cause) }), signal);
+  if (!r.ok && signal.aborted) return err(Async.Aborted({})); // the rejection was the cancellation, not the upstream
+  return r.ok ? ok(r.value) : r;
+};
+```
+
 ## What not to do
 
 | Don't | Because | Instead |
