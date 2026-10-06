@@ -133,7 +133,7 @@ type RepoError = ReturnType<typeof RowDecodeFailed> | ReturnType<typeof DbUnavai
 
 type Driver = { readonly query: (sql: string, params: ReadonlyArray<unknown>) => Promise<ReadonlyArray<unknown>> };
 
-export const listOrders = (db: Driver) => async (userId: UserId): AsyncResult<RepoError, OrderRow[]> => {
+export const listOrders = (db: Driver) => async (userId: UserId): AsyncResult<RepoError, ReadonlyArray<OrderRow>> => {
   const rows = await Async.fromPromise(db.query("select * from orders where user_id = $1", [userId]), (cause) => DbUnavailable({ cause }));
   if (!rows.ok) return rows;
   // A row that fails to decode is a schema drift bug: report it as its own tagged error, with the path.

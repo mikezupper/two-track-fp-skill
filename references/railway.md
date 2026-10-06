@@ -267,6 +267,33 @@ export const chargeWithRetry = (deps: Deps, cents: number, parent: AbortSignal):
 
 Retry rules: `attempts` counts the first try; `delay` is exponential with full jitter from an **injected** `Random`; the `retriable` predicate reads a field on the error, never a message string; `sleeper` is injected so tests are instant; the parent `AbortSignal` stops retrying on shutdown — no attempt starts after an abort, including during the backoff wait, and the outcome is `err(Aborted)`, which is why the error union above names `Async.Aborted` (it only appears when a `signal` is passed). Wrap the whole thing in `Async.withTimeout` when there is a deadline (`references/concurrency.md`).
 
+## Inference limit: annotate callbacks that can fail several ways
+
+TypeScript infers one `E` for a callback from the *first* `Err<…>` it sees, not the union of every branch. A `withTransaction` body or a `mapConcurrent` callback whose branches return `err(RepoError)` in one place and `err(InsufficientStock)` in another therefore fails to type-check with a confusing message about `Err<unknown>` or "no overload matches". The fix is to state the union once, on the callback:
+
+```ts
+import { Async, err, ok, tagged, type AsyncResult } from "two-track";
+
+const RepoError = tagged("RepoError")<{ op: string }>();
+const InsufficientStock = tagged("InsufficientStock")<{ sku: string }>();
+type ReserveError = ReturnType<typeof RepoError> | ReturnType<typeof InsufficientStock>;
+declare const reserve: (sku: string, signal: AbortSignal) => AsyncResult<ReturnType<typeof RepoError>, { ok: boolean }>;
+
+export const reserveAll = (skus: ReadonlyArray<string>, signal: AbortSignal): AsyncResult<ReserveError | Async.Aborted, void[]> =>
+  Async.mapConcurrent(
+    skus,
+    // The annotation is the fix: without it TypeScript picks one branch's error and rejects the other.
+    async (sku, _i, s): AsyncResult<ReserveError, void> => {
+      const r = await reserve(sku, s);
+      if (!r.ok) return r;
+      return r.value.ok ? ok(undefined) : err(InsufficientStock({ sku }));
+    },
+    { concurrency: 4, signal },
+  );
+```
+
+Name the union (`ReserveError`) next to the errors and reuse it; the edge's `match` then has one type to be exhaustive over. This was found building the proof repo's checkout.
+
 ## Checklist
 
 - [ ] Every `Async.retry` names its `retriable` predicate (required); nothing retries validation or `NotFound`
