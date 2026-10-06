@@ -37,14 +37,21 @@ Read it as: the baseline is ~12 ns per three-step pipeline; combinators are ~2x;
 
 **Decoders versus the field** (`pnpm bench:cross`; one schema in all four libraries — patterns, integer range, array, nested object, optional field; non-throwing APIs; 200k objects; best of 7; all four agree on validity)
 
-| Library | Node 24, valid | Node 24, 10% invalid | Bun 1.3, valid | ns per valid object (Node) |
+| Library | Node 24, valid | Node 24, 10% invalid | Bun 1.3, valid | ns per valid object (Node / Bun) |
 |---|---|---|---|---|
-| two-track 0.1.0 | 171 ms | 175 ms | 103 ms | 855 |
-| zod 4.6.5 | 204 ms | 237 ms | 149 ms | 1021 |
-| valibot 1.5.0 | 223 ms | 231 ms | 151 ms | 1116 |
-| arktype 2.2.7 | **46 ms** | 286 ms | **35 ms** | **230** |
+| two-track 0.1.0, interpreter | 140 ms | 140 ms | 67 ms | 699 / 335 |
+| two-track 0.1.0, `D.compile` | **60 ms** | **62 ms** | 35 ms | **299 / 173** |
+| zod 4.6.5 | 176 ms | 215 ms | 131 ms | 881 / 657 |
+| valibot 1.5.0 | 209 ms | 215 ms | 133 ms | 1045 / 665 |
+| arktype 2.2.7 | **43 ms** | 267 ms | **32 ms** | **213 / 160** |
 
-Honest reading: two-track's decoders are 15–30% faster than Zod and Valibot, and the fastest when a share of the input is invalid (its issue objects are cheap). ArkType's JIT-compiled validator is **3–4x faster on valid input**. Consequences for your design: (1) at ~1 µs per object, decoding is never the bottleneck of an I/O-bound service — a JSON parse of the same object costs more; (2) if you decode millions of valid objects per second on a CPU-bound path, ArkType behind an `infra/` adapter that returns `Result<DecodeError, A>` is a legitimate choice, and the skill's rules are about *where* decoding happens, not which engine does it; (3) stacked refinements and regex patterns are where two-track's nanoseconds go (~460 of the 855 on that schema), so keep hot wire shapes flat and move cosmetic normalization (`trimmed`, lower-casing) out of the per-object path.
+Honest reading: the interpreter is 20–35% faster than Zod and Valibot and the fastest interpreter when a share of the input is invalid. ArkType's JIT-compiled validator leads on valid input because literal-key code is the only thing below the ~94 ns floor of a generic keyed loop. `D.compile` generates that code and lands within 1.4x of ArkType on Node (8% on Bun), 4x ahead on partly invalid input, at parity on JSON text. Consequences for your design:
+
+1. At under a microsecond per object, decoding is never the bottleneck of an I/O-bound service; `JSON.parse` of the same object costs more. Do not reach for `compile` by reflex.
+2. On a CPU-bound path that decodes many **valid** objects (an import job, a stream processor, a cache warm), wrap the boundary decoder once: `const Fast = D.compile(Order)` at module level, next to the decoder. Semantics are identical by construction and property-tested, so nothing else changes.
+3. `compile` uses `new Function`. Under a CSP without `unsafe-eval`, on Cloudflare Workers, and in some extensions it is a no-op that returns the interpreter, so calling it is always safe; just do not *count* on the speed-up in those runtimes. Edge code should measure.
+4. It compiles the structural subset (struct, array, primitives + refinements, optional, nullable, option, literal); `record`, `taggedUnion`, `oneOf`, `map`, `andThen`, `json`, `lazy` are called through the interpreter from the generated code, so a schema dominated by those gains less.
+5. Regex patterns remain the single largest cost on the bench schema (~160 ns of raw `regex.test` for three patterns); keep hot wire shapes flat and keep cosmetic normalization out of the per-object path.
 
 **Decoder and async CPU overhead in isolation** (`pnpm bench:hot`, Node 24): a 4-field struct decodes in ~110 ns; an array of structs ~100 ns per element; error accumulation on an array of invalid items ~35 ns per issue; `mapConcurrent` and `validateConcurrent` add ~120 ns per item with immediately-resolved callbacks; a semaphore `run` with an immediate callback ~650 ns. None of these is visible next to a network call; all of them matter inside a tight loop over in-memory data.
 

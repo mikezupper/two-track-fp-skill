@@ -275,8 +275,24 @@ export const depth = (c: Category): number => 1 + Math.max(0, ...c.children.map(
 
 `D.isoDate` is strict: `YYYY-MM-DD` or a date-time with `Z`/`±HH:mm`, calendar-checked, offset required for date-times because a wall-clock time without a zone means nothing on a wire. If a producer sends `March 5, 2020` or `2023-02-30`, decoding fails and that is the point. When you must accept a sloppy producer, say so in the decoder's name: `D.dateFromString` is the engine's permissive grammar, and it belongs in that producer's adapter, never in a shared wire schema. Store instants as epoch milliseconds (`Instant` brand, `references/domain-types.md`), not `Date` objects.
 
+## When a boundary is hot
+
+Decoders cost roughly 0.3–0.7 µs per object interpreted, which is invisible behind any I/O. When a boundary is genuinely CPU-bound — a bulk import, a stream consumer, a cache rebuild — compile the decoder once at module level and keep the same name discipline:
+
+```ts
+import { D, type Infer } from "two-track";
+
+export const ImportRow = D.struct({ sku: D.pattern(/^[A-Z]{3}-\d{3}$/), qty: D.min(D.integer, 1), price: D.min(D.integer, 0) });
+export type ImportRow = Infer<typeof ImportRow>;
+// Same semantics, property-tested equivalent; literal-key code where `new Function` is allowed, the interpreter where it is not.
+export const ImportRowFast = D.compile(ImportRow);
+```
+
+Call `ImportRowFast.decode` on the hot path and `ImportRow` everywhere else; they are interchangeable. Do not compile in a loop or per request — compilation is a one-time cost — and measure before adopting it in edge runtimes, where it silently falls back (`references/performance.md`).
+
 ## Checklist
 
+- [ ] A hot boundary (bulk import, stream, cache rebuild) uses `D.compile(decoder)` created once at module level; everything else uses the interpreter
 - [ ] Every entry point (body, params, env, row, argv, message, form) has exactly one decoder; no `as` on external data
 - [ ] Nothing past a decoder re-checks (`typeof`, `!= null`, regex) — if it does, move the boundary
 - [ ] Decode errors are reported in full with `D.formatIssues` (400 / exit 2 / dead-letter); issues never contain values
