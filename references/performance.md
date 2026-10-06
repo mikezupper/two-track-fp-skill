@@ -24,16 +24,33 @@ Workload: a three-step railway (parse quantity → price → discount) over 1,00
 
 | Approach | Node 24 | Bun 1.3 |
 |---|---|---|
-| Ramda `pipeWith(chain)` over a Fantasy Land Result | 239 ms | 221 ms |
-| Ramda idiomatic point-free | 514 ms | 519 ms |
-| Effect 4 `Effect.gen` + `runSync` per item | 1923 ms | 969 ms |
-| Effect 4 `Effect.forEach`, one `runSync` | 1631 ms | 1144 ms |
+| Ramda `pipeWith(chain)` over a Fantasy Land Result | 319 ms | 244 ms |
+| Ramda idiomatic point-free | 620 ms | 553 ms |
+| Effect 4 `Effect.gen` + `runSync` per item | 2392 ms | 1410 ms |
+| Effect 4 `Effect.forEach`, one `runSync` | 1919 ms | 1269 ms |
 | Rust `Result` + `?` → WASM, batched, integer args | 4 ms | 3 ms |
 | Rust → WASM, one call per item, integer args | 8 ms | 4 ms |
 | native Rust binary | 1.5 ms | — |
 | `JSON.stringify` + `JSON.parse` of the same 1M objects | 439 ms | — |
 
-Read it as: the baseline is ~12 ns per three-step pipeline; combinators are ~2x; three encodings (generators, freeze, exceptions) are catastrophic; libraries with a runtime or a currying layer are 20–100x; and the WASM boundary for real (object/string) data costs 40x the whole JavaScript railway.
+Read it as: the baseline is ~12 ns per three-step pipeline; combinators are ~2x; three encodings (generators, freeze, exceptions) are catastrophic; libraries with a runtime or a currying layer are 20–100x; and the WASM boundary for real (object/string) data costs 40x the whole JavaScript railway. The Ramda/Effect rows are reproducible with `pnpm bench:cross` in the library repo (workspace `bench/cross`, pinned versions).
+
+**Decoders versus the field** (`pnpm bench:cross`; one schema in all four libraries — patterns, integer range, array, nested object, optional field; non-throwing APIs; 200k objects; best of 7; all four agree on validity)
+
+| Library | Node 24, valid | Node 24, 10% invalid | Bun 1.3, valid | ns per valid object (Node) |
+|---|---|---|---|---|
+| two-track 0.1.0 | 171 ms | 175 ms | 103 ms | 855 |
+| zod 4.6.5 | 204 ms | 237 ms | 149 ms | 1021 |
+| valibot 1.5.0 | 223 ms | 231 ms | 151 ms | 1116 |
+| arktype 2.2.7 | **46 ms** | 286 ms | **35 ms** | **230** |
+
+Honest reading: two-track's decoders are 15–30% faster than Zod and Valibot, and the fastest when a share of the input is invalid (its issue objects are cheap). ArkType's JIT-compiled validator is **3–4x faster on valid input**. Consequences for your design: (1) at ~1 µs per object, decoding is never the bottleneck of an I/O-bound service — a JSON parse of the same object costs more; (2) if you decode millions of valid objects per second on a CPU-bound path, ArkType behind an `infra/` adapter that returns `Result<DecodeError, A>` is a legitimate choice, and the skill's rules are about *where* decoding happens, not which engine does it; (3) stacked refinements and regex patterns are where two-track's nanoseconds go (~460 of the 855 on that schema), so keep hot wire shapes flat and move cosmetic normalization (`trimmed`, lower-casing) out of the per-object path.
+
+**Decoder and async CPU overhead in isolation** (`pnpm bench:hot`, Node 24): a 4-field struct decodes in ~110 ns; an array of structs ~100 ns per element; error accumulation on an array of invalid items ~35 ns per issue; `mapConcurrent` and `validateConcurrent` add ~120 ns per item with immediately-resolved callbacks; a semaphore `run` with an immediate callback ~650 ns. None of these is visible next to a network call; all of them matter inside a tight loop over in-memory data.
+
+**Lane overhead per trigger** (`pnpm bench:lanes`, Node 24, ratio against a direct call in the same run): `exhaustLane` 0.7x (rejections are a shared `Busy`), `queueLane` 2.7x (~750 ns), `throttle` 3.1x, `semaphore` 7x (~2 µs; it was 376x before its waiter queue was made linear — `Array.shift()` is O(n) on large V8 arrays, a pattern worth grepping your own `src/lib/` for), `debounce` 27x and `switchLane` 36x (~8–10 µs). Lanes belong on user-rate triggers; bounded per-row work uses `mapConcurrent` or a semaphore.
+
+**Consumer bundle sizes** (`pnpm bench:bundle`, minified bytes, esbuild root-namespace import → subpath import): Result `ok`/`err`/`andThen` 1,551 → 117; struct decoder 4,279 → 1,124; primitive decoder 4,234 → 304; async interop 3,102 → 170; concurrent map 3,096 → 642; switch lane 2,744 → 731. Rolldown prunes namespaces itself (114 / 1,119 / 301 / 176 / 653 / 769). Everything the library exports is ~15 kB minified, ~5.4 kB gzip. Rule: browser and edge code imports from subpaths (`references/scaffold.md` §1b).
 
 ## The rules that follow
 
@@ -158,6 +175,7 @@ Both engines agree on the ranking; they disagree on the magnitude of the bad enc
 
 ## Symptom → cause → fix
 
+
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | p99 latency spikes under load | unbounded fan-out, or no timeouts, so slow dependencies pile up | `Async.mapConcurrent` with explicit `concurrency`; `Async.withTimeout` on every external call |
@@ -167,6 +185,7 @@ Both engines agree on the ranking; they disagree on the magnitude of the bad enc
 | Generator frames in the profile | a do-notation helper crept in | early returns / `await` (decision 0002) |
 | "Fast locally, slow in CI" | absolute-ms benchmark assertions | assert ratios against an in-file baseline |
 | WASM slower than JS | per-call marshaling of objects/strings | batch into typed arrays, or stay in JS |
+| A queue/semaphore gets slower as it fills | `Array.shift()` or `indexOf`+`splice` on a large array (O(n) per op on V8) | head-index FIFO with tombstones, compact periodically; measure with a 200k-item drain test |
 
 ## Checklist
 

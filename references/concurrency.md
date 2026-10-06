@@ -282,6 +282,8 @@ const db = Lane.semaphore(10);
 export const load = (id: string): AsyncResult<Lane.Busy | Network, string> => db.run((signal) => (id === "" ? Promise.resolve(err(Network({ cause: "empty id" }))) : Promise.resolve(ok(id))), undefined);
 ```
 
+Cost, measured in the library (`pnpm bench:lanes`, Node 24): `queueLane`, `throttle` and `semaphore` add 0.5–2 µs per trigger; `switchLane` and `debounce` add ~10 µs on V8 (~1.5 µs on Bun) because each trigger allocates a controller, a race and an abort dispatch. That is the right price for keystrokes, clicks and webhooks and the wrong tool inside a per-row loop — there, `Async.mapConcurrent` or a `Lane.semaphore` is the bound you want.
+
 Testing lanes needs no real time: `Cap.manualSleeper()` fires debounce timers when the test says so, `Cap.controlledClock()` moves the throttle window, and deferred promises stand in for in-flight work. Assert the tag of the rejected call, that the superseded run observed `signal.aborted`, and that the lane-level `signal` aborts everything.
 
 ## What not to do
