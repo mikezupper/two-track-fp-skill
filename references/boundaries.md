@@ -271,6 +271,10 @@ export const Category: Decoder<Category> = D.lazy(() => D.struct({ name: D.nonEm
 export const depth = (c: Category): number => 1 + Math.max(0, ...c.children.map(depth));
 ```
 
+## Dates on the wire
+
+`D.isoDate` is strict: `YYYY-MM-DD` or a date-time with `Z`/`±HH:mm`, calendar-checked, offset required for date-times because a wall-clock time without a zone means nothing on a wire. If a producer sends `March 5, 2020` or `2023-02-30`, decoding fails and that is the point. When you must accept a sloppy producer, say so in the decoder's name: `D.dateFromString` is the engine's permissive grammar, and it belongs in that producer's adapter, never in a shared wire schema. Store instants as epoch milliseconds (`Instant` brand, `references/domain-types.md`), not `Date` objects.
+
 ## Checklist
 
 - [ ] Every entry point (body, params, env, row, argv, message, form) has exactly one decoder; no `as` on external data

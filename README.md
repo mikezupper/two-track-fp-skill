@@ -137,7 +137,7 @@ two-track-fp-skill/
 ├── SKILL.md                        # entry point: philosophy, hard rules, decision table,
 │                                   # anti-patterns, build workflow, reference index, what doesn't map
 └── references/
-    ├── scaffold.md                 # pnpm, TS 7 strict tsconfig, layout, the invariants script, vitest, CI
+    ├── scaffold.md                 # pnpm, TS 7 strict tsconfig, layout, two-track-check config, subpath imports, vitest, CI
     ├── railway.md                  # tagged errors, expected-vs-defect, composing sync/async,
     │                               # traverse vs validateAll vs partition, interop edges, retry
     ├── domain-types.md             # brands via decoders, tagged unions, Option, state machines,
@@ -197,7 +197,7 @@ Progressive disclosure, which is why it is a folder and not one big file:
 
 **Reviewing the output**
 
-- The agent must run the `code-review.md` pass itself; the same greps are a good human review script and most are in the scaffolded `scripts/invariants.ts`.
+- The agent must run the `code-review.md` pass itself; `two-track-check --strict` is the mechanical half of it and runs in CI, and the greps are a good human review script for the rest.
 - Pair with `/code-review` (or ultrareview for big changes) for an independent adversarial pass; this skill biases construction, a reviewer biases destruction.
 
 **Customizing**

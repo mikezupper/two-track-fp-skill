@@ -99,7 +99,7 @@ Every rule has a mechanical check in `references/code-review.md`; several are al
 
 ## Workflow for building an app
 
-1. **Scaffold** (`references/scaffold.md`): pnpm, TS 7 strict, two-track pinned, vitest + fast-check, the invariants script, CI.
+1. **Scaffold** (`references/scaffold.md`): pnpm, TS 7 strict, two-track pinned, `two-track-check` as the lint step, vitest + fast-check, CI; subpath imports (`two-track/result`, `two-track/decode`, …) for browser and edge bundles.
 2. **Model the domain first** (`references/domain-types.md`): brands via decoders, tagged unions, `Option`. Write the types before any logic — wrong states should fail to compile.
 3. **Define the error taxonomy** (`references/railway.md`): one `tagged` error per failure mode; decide expected-error vs defect; decide accumulate vs fail-fast per step.
 4. **Define the boundary decoders** (`references/boundaries.md`): one `D.struct` per place untrusted data enters. Do this before wiring any I/O.
@@ -115,7 +115,7 @@ Every rule has a mechanical check in `references/code-review.md`; several are al
 
 | File | Read when |
 |---|---|
-| `references/scaffold.md` | Starting a project: versions, tsconfig, layout, invariants script, CI |
+| `references/scaffold.md` | Starting a project: versions, tsconfig, layout, `two-track-check` config, subpath imports, CI |
 | `references/railway.md` | Designing errors, composing Result/AsyncResult, accumulation vs fail-fast, interop edges |
 | `references/domain-types.md` | Modeling: brands, tagged unions, Option, state transitions, commands/events, money & time |
 | `references/boundaries.md` | Any place untrusted data enters: decoders for bodies, rows, env, argv, JSON, DOM |

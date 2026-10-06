@@ -120,6 +120,8 @@ Same `tsconfig` as `two-track` itself (strict flags, `erasableSyntaxOnly`, `verb
 
 ## Browser and Lit frontends
 
+Import from subpaths here (`two-track/result`, `two-track/decode`, …): bundlers keep only what you use, and the measured difference is 5–13x for small consumers (`references/scaffold.md`, section 1b).
+
 Nothing changes: no `node:` is used anywhere in `two-track`, so the same import works in the browser. Decode every `fetch` response (the server is another untrusted boundary), keep view state as a tagged union rather than `loading`/`error`/`data` flags, and represent "nothing selected" as `Option`. For the component layer itself, use the `lit-web-apps` skill; this skill owns the data and state model under it.
 
 ```ts
@@ -158,6 +160,8 @@ export const title = (s: ViewState): string =>
 ```
 
 ## Edge workers (Cloudflare Workers, Deno Deploy, Vercel Edge)
+
+Import from subpaths here (`two-track/result`, `two-track/decode`, …): bundlers keep only what you use, and the measured difference is 5–13x for small consumers (`references/scaffold.md`, section 1b).
 
 Web-standard runtime, no `node:`, cold starts measured in milliseconds — exactly where zero runtime dependencies pays. Platform bindings (KV, D1, queues) are the capability implementations; the handler module is the composition root.
 

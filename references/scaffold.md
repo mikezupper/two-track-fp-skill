@@ -39,6 +39,18 @@ Verified against two-track 0.1.0 (October 2026) with TypeScript 7.0.2, vitest 5.
 
 Node ≥ 22.18 runs `.ts` files directly through native type stripping, so `scripts/`, `bench/`, and `src/main.ts` need no `tsx`. The price is `erasableSyntaxOnly`: no `enum`, no `namespace`, no parameter properties — none of which this skill uses anyway.
 
+## 1b. Import style: subpaths for anything that ships to a browser or an edge runtime
+
+The root entry exposes namespaces (`R`, `O`, `D`, `Async`, `Cap`, `Lane`) and is the readable default for services. Every module is also a subpath (`two-track/result`, `option`, `brand`, `tagged`, `match`, `fn`, `decode`, `async`, `capabilities`, `lanes`, and `two-track/testing`). esbuild retains a whole namespace once any member is touched, so for code that is bundled for a browser or an edge worker import the functions you use from the subpath (two-track decision 0013):
+
+```ts
+import { ok, err, andThen } from "two-track/result";
+import { struct, integer, nonEmptyString } from "two-track/decode";
+import { mapConcurrent } from "two-track/async";
+```
+
+Measured on the library's bundle bench: a Result consumer is 117 B through the subpath versus 1,551 B through the root namespace with esbuild; a struct decoder is 1,124 B versus 4,279 B. Rolldown prunes namespaces itself, so there the difference is small. Server code may keep the namespaces; the types are identical either way, and `two-track-check` recognizes both import styles.
+
 ## 2. tsconfig.json — strictness is part of the skill
 
 ```jsonc
