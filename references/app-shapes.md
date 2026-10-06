@@ -81,6 +81,8 @@ export const server = createServer((req, res) => {
 
 Hono, Fastify and the Fetch-API runtimes hand you `request.signal` already wired this way; only the bare `node:http` adapter has this trap.
 
+Two more interop-edge rules for a body reader, both found by the proof repo's integration suite rather than by review: **anything that can throw inside a stream listener must be converted on the spot** (a `JSON.parse` in an `"end"` handler throws outside the promise executor, the promise never settles, and the request hangs until its deadline — parse the text with `R.fromThrowable` or `D.json` *after* the stream has been collected), and **a request-size limit must still produce a response** (`req.pause()` and reject with a tagged error that maps to 413, never `req.destroy()`, which drops the socket with no status; send `connection: close` with the 413 so the unread remainder cannot poison keep-alive).
+
 ## CLI
 
 `node:util`'s `parseArgs` yields strings and booleans; a `D.struct` turns them into the command; exit codes come from an exhaustive `match`, using the sysexits convention (64 usage, 65 data, 66 no input, 69 unavailable, 70 software).
